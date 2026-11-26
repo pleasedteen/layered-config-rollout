@@ -1,0 +1,25 @@
+{
+  "releaseId": "batch-demo-001",
+  "batches": [
+    ["checkout", "payments"],
+    ["risk"]
+  ],
+  "changes": [
+    {
+      "serviceId": "checkout",
+      "routeId": "slow-quote",
+      "timeoutMs": 40
+    },
+    {
+      "serviceId": "payments",
+      "routeId": "charge-card",
+      "timeoutMs": 1800,
+      "rateLimitPerMinute": 25
+    },
+    {
+      "serviceId": "risk",
+      "routeId": "score-order",
+      "rateLimitPerMinute": 240
+    }
+  ]
+}

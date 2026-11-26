@@ -1,0 +1,118 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+export function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
+  const json = JSON.stringify(body);
+  res.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(json),
+    'cache-control': 'no-store',
+  });
+  res.end(json);
+}
+
+export async function readJsonBody(req: IncomingMessage, maxBytes = 4 * 1024 * 1024): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > maxBytes) {
+      throw new Error('request body too large');
+    }
+    chunks.push(buffer);
+  }
+  if (chunks.length === 0) return {};
+  const raw = Buffer.concat(chunks).toString('utf8');
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error('request body must be valid JSON');
+  }
+}
+
+export function parseCliArgs(argv: string[]): Record<string, string | boolean> {
+  const args: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (!token?.startsWith('--')) continue;
+    const withoutPrefix = token.slice(2);
+    const equals = withoutPrefix.indexOf('=');
+    if (equals >= 0) {
+      args[withoutPrefix.slice(0, equals)] = withoutPrefix.slice(equals + 1);
+    } else {
+      const key = withoutPrefix;
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        args[key] = next;
+        i += 1;
+      } else {
+        args[key] = true;
+      }
+    }
+  }
+  return args;
+}
+
+export function requireStringArg(args: Record<string, string | boolean>, key: string): string {
+  const value = args[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`missing required --${key}`);
+  }
+  return value;
+}
+
+export function numberArg(
+  args: Record<string, string | boolean>,
+  key: string,
+  defaultValue: number,
+): number {
+  const value = args[key];
+  if (value === undefined || value === true) return defaultValue;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`--${key} must be a number`);
+  return parsed;
+}
+
+export async function fetchJson(
+  url: string,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<{ status: number; body: any; text: string }> {
+  const { timeoutMs = 5000, headers, ...rest } = init;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...rest,
+      headers,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let body: any = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { raw: text };
+      }
+    }
+    return { status: response.status, body, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function waitForHttpHealth(url: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const result = await fetchJson(`${url}/health`, { timeoutMs: 500 });
+      if (result.status === 200) return;
+      lastError = new Error(`health status ${result.status}; body=${result.text.slice(0, 200)}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  throw new Error(`service at ${url} did not become healthy: ${String(lastError)}`);
+}

@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "services": [
+    {
+      "id": "checkout",
+      "displayName": "Checkout forwarding service",
+      "routes": [
+        {
+          "id": "create-order",
+          "method": "POST",
+          "path": "/proxy/create-order",
+          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
+          "upstream": { "latencyMs": 12, "status": 201, "body": "order-created" }
+        },
+        {
+          "id": "confirm-payment",
+          "method": "POST",
+          "path": "/proxy/confirm-payment",
+          "initial": { "timeoutMs": 1200, "rateLimitPerMinute": 30 },
+          "upstream": { "latencyMs": 18, "status": 200, "body": "payment-confirmed" }
+        },
+        {
+          "id": "calculate-shipping",
+          "method": "GET",
+          "path": "/proxy/calculate-shipping",
+          "initial": { "timeoutMs": 800, "rateLimitPerMinute": 120 },
+          "upstream": { "latencyMs": 20, "status": 200, "body": "shipping-quote" }
+        },
+        {
+          "id": "inventory-reserve",
+          "method": "POST",
+          "path": "/proxy/inventory-reserve",
+          "initial": { "timeoutMs": 900, "rateLimitPerMinute": 45 },
+          "upstream": { "latencyMs": 15, "status": 200, "body": "reserved" }
+        },
+        {
+          "id": "customer-profile",
+          "method": "GET",
+          "path": "/proxy/customer-profile",
+          "initial": { "timeoutMs": 700, "rateLimitPerMinute": 200 },
+          "upstream": { "latencyMs": 10, "status": 200, "body": "profile" }
+        },
+        {
+          "id": "webhook-delivery",
+          "method": "POST",
+          "path": "/proxy/webhook-delivery",
+          "initial": { "timeoutMs": 5000, "rateLimitPerMinute": 600 },
+          "upstream": { "latencyMs": 8, "status": 202, "body": "accepted" }
+        },
+        {
+          "id": "concurrent-precedence",
+          "method": "GET",
+          "path": "/proxy/concurrent-precedence",
+          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 100 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "precedence" }
+        },
+        {
+          "id": "atomic-a",
+          "method": "GET",
+          "path": "/proxy/atomic-a",
+          "initial": { "timeoutMs": 1100, "rateLimitPerMinute": 111 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "a" }
+        },
+        {
+          "id": "atomic-b",
+          "method": "GET",
+          "path": "/proxy/atomic-b",
+          "initial": { "timeoutMs": 1200, "rateLimitPerMinute": 222 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "b" }
+        },
+        {
+          "id": "restart-route",
+          "method": "GET",
+          "path": "/proxy/restart-route",
+          "initial": { "timeoutMs": 1300, "rateLimitPerMinute": 333 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "restart" }
+        },
+        {
+          "id": "slow-quote",
+          "method": "GET",
+          "path": "/proxy/slow-quote",
+          "initial": { "timeoutMs": 500, "rateLimitPerMinute": 100 },
+          "upstream": { "latencyMs": 120, "status": 200, "body": "slow-quote" }
+        },
+        {
+          "id": "rate-limited-demo",
+          "method": "GET",
+          "path": "/proxy/rate-limited-demo",
+          "initial": { "timeoutMs": 500, "rateLimitPerMinute": 100 },
+          "upstream": { "latencyMs": 4, "status": 200, "body": "rate-demo" }
+        }
+      ]
+    },
+    {
+      "id": "payments",
+      "displayName": "Payments forwarding service",
+      "routes": [
+        {
+          "id": "charge-card",
+          "method": "POST",
+          "path": "/proxy/charge-card",
+          "initial": { "timeoutMs": 2000, "rateLimitPerMinute": 20 },
+          "upstream": { "latencyMs": 30, "status": 200, "body": "charged" }
+        },
+        {
+          "id": "refund",
+          "method": "POST",
+          "path": "/proxy/refund",
+          "initial": { "timeoutMs": 2000, "rateLimitPerMinute": 20 },
+          "upstream": { "latencyMs": 25, "status": 200, "body": "refunded" }
+        },
+        {
+          "id": "payment-methods",
+          "method": "GET",
+          "path": "/proxy/payment-methods",
+          "initial": { "timeoutMs": 800, "rateLimitPerMinute": 100 },
+          "upstream": { "latencyMs": 12, "status": 200, "body": "methods" }
+        },
+        {
+          "id": "ledger-entries",
+          "method": "GET",
+          "path": "/proxy/ledger-entries",
+          "initial": { "timeoutMs": 1500, "rateLimitPerMinute": 80 },
+          "upstream": { "latencyMs": 22, "status": 200, "body": "entries" }
+        }
+      ]
+    },
+    {
+      "id": "risk",
+      "displayName": "Risk forwarding service",
+      "routes": [
+        {
+          "id": "score-order",
+          "method": "POST",
+          "path": "/proxy/score-order",
+          "initial": { "timeoutMs": 600, "rateLimitPerMinute": 200 },
+          "upstream": { "latencyMs": 16, "status": 200, "body": "score" }
+        },
+        {
+          "id": "device-fingerprint",
+          "method": "GET",
+          "path": "/proxy/device-fingerprint",
+          "initial": { "timeoutMs": 400, "rateLimitPerMinute": 500 },
+          "upstream": { "latencyMs": 8, "status": 200, "body": "fingerprint" }
+        },
+        {
+          "id": "rules-config",
+          "method": "GET",
+          "path": "/proxy/rules-config",
+          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
+          "upstream": { "latencyMs": 14, "status": 200, "body": "rules" }
+        }
+      ]
+    }
+  ]
+}

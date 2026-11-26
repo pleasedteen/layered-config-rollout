@@ -1,0 +1,24 @@
+{
+  "name": "route-release-coordinator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Release coordinator and local simulated route-forwarding services with atomic config visibility and chaos fixtures.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node dist/test/run-checks.js",
+    "fixture": "npm run build && node dist/fixture/local.js",
+    "coordinator": "node dist/coordinator/main.js",
+    "service": "node dist/service/main.js",
+    "chaos": "node dist/chaos/main.js",
+    "op": "node dist/cli/operator.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
