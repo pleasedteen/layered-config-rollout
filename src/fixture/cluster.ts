@@ -60,6 +60,8 @@ export interface FixtureClusterOptions {
   servicePorts?: Record<string, { direct?: number; chaos?: number }>;
   requestTimeoutMs?: number;
   reconcileIntervalMs?: number;
+  timelineSegmentSize?: number;
+  timelineSyncIntervalMs?: number;
   startCoordinator?: boolean;
   verbose?: boolean;
 }
@@ -70,6 +72,8 @@ export class FixtureCluster {
   readonly fixturePath: string;
   readonly requestTimeoutMs: number;
   readonly reconcileIntervalMs: number;
+  readonly timelineSegmentSize: number | undefined;
+  readonly timelineSyncIntervalMs: number | undefined;
   readonly services = new Map<string, ManagedService>();
   coordinatorPort: number | undefined;
   coordinatorUrl: string | undefined;
@@ -84,6 +88,8 @@ export class FixtureCluster {
     this.dataDir = dataDir;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 350;
     this.reconcileIntervalMs = options.reconcileIntervalMs ?? 250;
+    this.timelineSegmentSize = options.timelineSegmentSize;
+    this.timelineSyncIntervalMs = options.timelineSyncIntervalMs;
   }
 
   static async start(options: FixtureClusterOptions): Promise<FixtureCluster> {
@@ -143,6 +149,8 @@ export class FixtureCluster {
       fixturePath: this.fixturePath,
       requestTimeoutMs: this.requestTimeoutMs,
       reconcileIntervalMs: this.reconcileIntervalMs,
+      timelineSegmentSize: this.timelineSegmentSize,
+      timelineSyncIntervalMs: this.timelineSyncIntervalMs,
       services: this.endpoints(),
     };
     this.clusterConfigPath = path.join(this.dataDir, 'cluster-config.json');

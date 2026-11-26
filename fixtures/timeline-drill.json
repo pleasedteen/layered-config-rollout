@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "services": [
+    {
+      "id": "sync",
+      "displayName": "Timeline backfill drill service",
+      "routes": [
+        {
+          "id": "r1",
+          "method": "GET",
+          "path": "/proxy/r1",
+          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
+          "upstream": { "latencyMs": 2, "status": 200, "body": "r1" }
+        },
+        {
+          "id": "r2",
+          "method": "GET",
+          "path": "/proxy/r2",
+          "initial": { "timeoutMs": 2000, "rateLimitPerMinute": 30 },
+          "upstream": { "latencyMs": 2, "status": 200, "body": "r2" }
+        },
+        {
+          "id": "r3",
+          "method": "GET",
+          "path": "/proxy/r3",
+          "initial": { "timeoutMs": 4000, "rateLimitPerMinute": 90 },
+          "upstream": { "latencyMs": 2, "status": 200, "body": "r3" }
+        }
+      ]
+    },
+    {
+      "id": "overlap",
+      "displayName": "Overlapping release drill service",
+      "routes": [
+        {
+          "id": "ov",
+          "method": "GET",
+          "path": "/proxy/ov",
+          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
+          "upstream": { "latencyMs": 2, "status": 200, "body": "ov" }
+        }
+      ]
+    }
+  ]
+}

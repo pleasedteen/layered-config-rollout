@@ -175,6 +175,10 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
             'POST /api/reconcile',
             'GET /api/dashboard',
             'GET /api/services/:serviceId/actual-config',
+            'GET /api/services/:serviceId/timeline',
+            'POST /api/services/:serviceId/timeline/sync',
+            'GET /api/timeline?serviceId=:serviceId',
+            'POST /api/timeline/sync',
           ],
         });
         return;
@@ -247,6 +251,58 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
       if (req.method === 'GET' && segments[0] === 'api' && segments[1] === 'services' && segments[3] === 'actual-config') {
         const serviceId = decodeURIComponent(segments[2] ?? '');
         sendJson(res, 200, await coordinator.getActualConfig(serviceId));
+        return;
+      }
+
+      if (segments[0] === 'api' && segments[1] === 'services' && segments[3] === 'timeline' && segments[2]) {
+        const serviceId = decodeURIComponent(segments[2]);
+
+        // GET /api/services/:serviceId/timeline — local collected view;
+        // works while the target service is offline.
+        if (req.method === 'GET' && !segments[4]) {
+          const view = coordinator.getServiceTimeline(serviceId);
+          const order = url.searchParams.get('order') === 'desc' ? 'desc' : 'asc';
+          let timeline = view.timeline;
+          if (order === 'desc') timeline = [...timeline].reverse();
+          const limitParam = url.searchParams.get('limit');
+          if (limitParam !== null) {
+            const limit = Number(limitParam);
+            if (Number.isInteger(limit) && limit >= 0) timeline = timeline.slice(0, limit);
+          }
+          sendJson(res, 200, { ...view, timeline, order, queriedAt: new Date().toISOString() });
+          return;
+        }
+
+        // POST /api/services/:serviceId/timeline/sync[?maxSegments=N]
+        if (req.method === 'POST' && segments[4] === 'sync') {
+          const maxSegmentsParam = url.searchParams.get('maxSegments');
+          const maxSegments = maxSegmentsParam === null ? undefined : Number(maxSegmentsParam);
+          const report = await coordinator.requestTimelineSync(serviceId, {
+            maxSegments: Number.isInteger(maxSegments) && (maxSegments as number) > 0
+              ? (maxSegments as number)
+              : undefined,
+          });
+          const view = coordinator.getServiceTimeline(serviceId);
+          sendJson(res, 200, { ...report, ...view });
+          return;
+        }
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/timeline/sync') {
+        const reports = await coordinator.syncAllTimelines();
+        sendJson(res, 200, { ok: true, reports });
+        return;
+      }
+
+      // Convenience alias: GET /api/timeline?serviceId=:id behaves like the
+      // nested per-service route; without it, returns every collected timeline.
+      if (req.method === 'GET' && url.pathname === '/api/timeline') {
+        const serviceId = url.searchParams.get('serviceId');
+        if (serviceId) {
+          sendJson(res, 200, coordinator.getServiceTimeline(serviceId));
+          return;
+        }
+        sendJson(res, 200, { timelines: coordinator.getAllServiceTimelines() });
         return;
       }
 

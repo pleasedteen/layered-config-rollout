@@ -10,11 +10,15 @@ import {
 } from '../shared/validation.js';
 import type {
   CoordinatorPersistentState,
+  EffectiveSwitchRecord,
   ReleaseRecord,
   RevokeDispatchState,
   ServiceDispatchState,
   ServiceEndpoint,
   FixtureData,
+  TimelineSegmentStat,
+  TimelineSyncReport,
+  TimelineSyncState,
 } from '../shared/types.js';
 
 export interface CoordinatorOptions {
@@ -24,6 +28,9 @@ export interface CoordinatorOptions {
   requestTimeoutMs?: number;
   retryDelayMs?: number;
   reconcileIntervalMs?: number;
+  /** Records per timeline backfill segment (default 50). */
+  timelineSegmentSize?: number;
+  timelineTimeoutMs?: number;
 }
 
 export interface CreateReleaseInput {
@@ -38,9 +45,13 @@ export class Coordinator {
   readonly store: AtomicJsonStore<CoordinatorPersistentState>;
   private readonly endpoints = new Map<string, ServiceEndpoint>();
   private readonly loops = new Map<string, Promise<void>>();
+  private readonly timelineChains = new Map<string, Promise<TimelineSyncReport>>();
   private reconcileTimer: NodeJS.Timeout | undefined;
+  private timelineTimer: NodeJS.Timeout | undefined;
   private readonly requestTimeoutMs: number;
   private readonly retryDelayMs: number;
+  private readonly timelineSegmentSize: number;
+  private readonly timelineTimeoutMs: number;
 
   constructor(private readonly options: CoordinatorOptions) {
     this.store = new AtomicJsonStore<CoordinatorPersistentState>(
@@ -49,16 +60,53 @@ export class Coordinator {
     for (const endpoint of options.endpoints) this.endpoints.set(endpoint.id, endpoint);
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1200;
     this.retryDelayMs = options.retryDelayMs ?? 180;
+    this.timelineSegmentSize = Math.max(1, Math.trunc(options.timelineSegmentSize ?? 50));
+    this.timelineTimeoutMs = options.timelineTimeoutMs ?? 5000;
   }
 
   async start(): Promise<void> {
-    await this.store.initialize(() => ({ version: 1, acceptedOrder: 0, releases: {} }));
+    await this.store.initialize(() => ({
+      version: 1,
+      acceptedOrder: 0,
+      releases: {},
+      timelines: {},
+      timelineSync: {},
+    }));
+    await this.ensureTimelineStateShape();
     await this.reconcileAll();
     for (const release of Object.values(this.store.get().releases)) {
       if (release.status === 'running' || release.status === 'pausing' || release.status === 'revoking') {
         this.ensureLoop(release.id);
       }
     }
+    // Best-effort resume of any interrupted segmented backfill after a
+    // coordinator restart; the durable per-service cursor prevents gaps and
+    // duplicate collection.
+    void this.syncAllTimelines().catch((error) => {
+      console.error('[coordinator] initial timeline sync failed:', error);
+    });
+  }
+
+  /** Adds timeline containers to snapshots written by older versions. */
+  private async ensureTimelineStateShape(): Promise<void> {
+    const state = this.store.get() as Partial<CoordinatorPersistentState>;
+    if (state.timelines && state.timelineSync) return;
+    await this.store.mutate((draft) => {
+      if (!draft.timelines) draft.timelines = {};
+      if (!draft.timelineSync) draft.timelineSync = {};
+      return { next: draft, result: undefined };
+    });
+  }
+
+  startTimelineSync(intervalMs = 1000): void {
+    if (this.timelineTimer) clearInterval(this.timelineTimer);
+    if (!intervalMs || intervalMs <= 0) return;
+    this.timelineTimer = setInterval(() => {
+      void this.syncAllTimelines().catch((error) => {
+        console.error('[coordinator] timeline sync failed:', error);
+      });
+    }, intervalMs);
+    this.timelineTimer.unref?.();
   }
 
   startPeriodicReconcile(intervalMs = 700): void {
@@ -71,8 +119,13 @@ export class Coordinator {
     this.reconcileTimer.unref?.();
   }
 
+  async syncAllTimelines(): Promise<TimelineSyncReport[]> {
+    return Promise.all(this.getServiceIds().map((serviceId) => this.requestTimelineSync(serviceId)));
+  }
+
   close(): void {
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    if (this.timelineTimer) clearInterval(this.timelineTimer);
   }
 
   getRelease(id: string): ReleaseRecord {
@@ -598,5 +651,236 @@ export class Coordinator {
     const response = await fetchJson(`${url}/__admin/config`, { timeoutMs: this.requestTimeoutMs });
     if (response.status !== 200) throw new Error(`service config fetch failed: ${response.status}`);
     return response.body;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Effective timeline collection and query
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Local, durable timeline read. This never contacts the service, so already
+   * collected switches and sync progress remain queryable while the service
+   * is offline.
+   */
+  getServiceTimeline(serviceId: string): {
+    serviceId: string;
+    count: number;
+    timeline: EffectiveSwitchRecord[];
+    sync: TimelineSyncState;
+  } {
+    if (!this.endpoints.has(serviceId) && !this.store.get().timelines[serviceId]) {
+      throw new ApiError(404, `unknown service: ${serviceId}`);
+    }
+    const state = this.store.get();
+    const timeline = [...(state.timelines[serviceId] ?? [])].sort((a, b) => a.seq - b.seq);
+    const sync = this.syncStateView(serviceId);
+    return { serviceId, count: timeline.length, timeline, sync };
+  }
+
+  /** Collected timeline views for every configured/persisted service. */
+  getAllServiceTimelines(): Array<ReturnType<Coordinator['getServiceTimeline']>> {
+    const ids = new Set<string>([...this.endpoints.keys(), ...Object.keys(this.store.get().timelines)]);
+    return [...ids].sort().map((serviceId) => this.getServiceTimeline(serviceId));
+  }
+
+  private syncStateView(serviceId: string): TimelineSyncState {
+    const existing = this.store.get().timelineSync[serviceId];
+    if (existing) return existing;
+    return {
+      serviceId,
+      lastSeq: 0,
+      caughtUp: false,
+      segmentSize: this.timelineSegmentSize,
+      segmentFetchCount: 0,
+      recentSegments: [],
+    };
+  }
+
+  /**
+   * Serializes sync runs per service so startup, timer and manual triggers
+   * cannot interleave segment loops.
+   */
+  requestTimelineSync(
+    serviceId: string,
+    options: { maxSegments?: number } = {},
+  ): Promise<TimelineSyncReport> {
+    if (!this.endpoints.has(serviceId)) {
+      return Promise.reject(new ApiError(404, `no endpoint configured for service ${serviceId}`));
+    }
+    const previous = this.timelineChains.get(serviceId) ?? Promise.resolve(null as unknown as TimelineSyncReport);
+    const run = previous
+      .catch(() => null)
+      .then(() => this.syncServiceTimeline(serviceId, options));
+    this.timelineChains.set(serviceId, run);
+    run.finally(() => {
+      if (this.timelineChains.get(serviceId) === run) this.timelineChains.delete(serviceId);
+    }).catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Pulls only the missing timeline suffix in fixed-size segments. Every
+   * segment is merged and its cursor persisted in one atomic coordinator
+   * state transaction before the next segment is fetched, so a restart at
+   * any point resumes from the durable high-water mark without gaps or
+   * duplicate rows.
+   */
+  async syncServiceTimeline(
+    serviceId: string,
+    options: { maxSegments?: number } = {},
+  ): Promise<TimelineSyncReport> {
+    const endpoint = this.endpoint(serviceId);
+    const maxSegments = options.maxSegments;
+    const startedSeq = this.syncStateView(serviceId).lastSeq;
+    const segments: TimelineSegmentStat[] = [];
+    let fetchedCount = 0;
+    let remoteHeadSeq: number | undefined;
+    let caughtUp = false;
+    let truncated = false;
+
+    // The loop cursor always comes from durable state, never from a local
+    // variable alone, which keeps restart/resume and concurrent callers safe.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (maxSegments !== undefined && segments.length >= maxSegments) {
+        truncated = true;
+        break;
+      }
+      const afterSeq = this.syncStateView(serviceId).lastSeq;
+      const url =
+        `${endpoint.baseUrl}/__admin/timeline?afterSeq=${afterSeq}` +
+        `&limit=${this.timelineSegmentSize}`;
+
+      let page: any;
+      try {
+        const response = await fetchJson(url, { method: 'GET', timeoutMs: this.timelineTimeoutMs });
+        if (response.status !== 200) {
+          throw new Error(`timeline fetch failed with HTTP ${response.status}: ${response.text.slice(0, 200)}`);
+        }
+        page = response.body;
+      } catch (error) {
+        const message = (error as Error).message;
+        await this.recordSyncError(serviceId, message);
+        return {
+          ok: false,
+          serviceId,
+          startedSeq,
+          lastSeq: this.syncStateView(serviceId).lastSeq,
+          caughtUp: false,
+          fetchedCount,
+          segments,
+          truncated,
+          error: message,
+        };
+      }
+
+      const records: EffectiveSwitchRecord[] = Array.isArray(page?.records) ? page.records : [];
+      const headSeq = Number.isInteger(page?.headSeq) ? Number(page.headSeq) : undefined;
+      remoteHeadSeq = headSeq;
+      const firstSeq = records[0]?.seq;
+      if (records.length > 0 && firstSeq !== afterSeq + 1) {
+        const message = `timeline gap for ${serviceId}: expected seq ${afterSeq + 1}, service returned ${firstSeq}`;
+        await this.recordSyncError(serviceId, message);
+        return {
+          ok: false,
+          serviceId,
+          startedSeq,
+          lastSeq: afterSeq,
+          remoteHeadSeq,
+          caughtUp: false,
+          fetchedCount,
+          segments,
+          truncated,
+          error: message,
+        };
+      }
+
+      const nextSeq = records.length > 0 ? records[records.length - 1]!.seq : afterSeq;
+      const stat: TimelineSegmentStat = {
+        at: nowIso(),
+        afterSeq,
+        limit: this.timelineSegmentSize,
+        returned: records.length,
+        nextSeq,
+      };
+
+      await this.store.mutate((draft) => {
+        const sync = this.ensureSyncDraft(draft, serviceId);
+        const list = (draft.timelines[serviceId] ??= []);
+        const knownSeqs = new Set(list.map((record) => record.seq));
+        for (const record of records) {
+          // Idempotent merge: never insert the same service seq twice.
+          if (!knownSeqs.has(record.seq) && record.seq > sync.lastSeq) list.push(record);
+        }
+        list.sort((a, b) => a.seq - b.seq);
+        if (list.length > 0) {
+          const maxSeq = list[list.length - 1]!.seq;
+          if (maxSeq > sync.lastSeq) sync.lastSeq = maxSeq;
+        }
+        const nowCaughtUp = records.length < this.timelineSegmentSize &&
+          (headSeq === undefined || sync.lastSeq >= headSeq);
+        // An idle tail-poll that changes nothing need not rewrite the file.
+        const meaningful =
+          records.length > 0 ||
+          !sync.caughtUp ||
+          Boolean(sync.lastError) ||
+          sync.remoteHeadSeq !== headSeq;
+        if (!meaningful) return { result: undefined };
+        sync.remoteHeadSeq = headSeq;
+        sync.caughtUp = nowCaughtUp;
+        sync.lastAttemptAt = stat.at;
+        sync.lastSuccessAt = stat.at;
+        sync.lastError = undefined;
+        if (records.length > 0) {
+          sync.segmentFetchCount += 1;
+          sync.recentSegments.push(stat);
+          if (sync.recentSegments.length > 20) sync.recentSegments.shift();
+        }
+        return { next: draft, result: undefined };
+      });
+
+      segments.push(stat);
+      fetchedCount += records.length;
+      caughtUp = this.syncStateView(serviceId).caughtUp;
+
+      // A short page means no more rows after this segment.
+      if (records.length < this.timelineSegmentSize) break;
+    }
+
+    const finalState = this.syncStateView(serviceId);
+    return {
+      ok: true,
+      serviceId,
+      startedSeq,
+      lastSeq: finalState.lastSeq,
+      remoteHeadSeq,
+      caughtUp,
+      fetchedCount,
+      segments,
+      truncated,
+    };
+  }
+
+  private ensureSyncDraft(draft: CoordinatorPersistentState, serviceId: string): TimelineSyncState {
+    draft.timelines ??= {};
+    draft.timelineSync ??= {};
+    return (draft.timelineSync[serviceId] ??= {
+      serviceId,
+      lastSeq: 0,
+      caughtUp: false,
+      segmentSize: this.timelineSegmentSize,
+      segmentFetchCount: 0,
+      recentSegments: [],
+    });
+  }
+
+  private async recordSyncError(serviceId: string, message: string): Promise<void> {
+    await this.store.mutate((draft) => {
+      const sync = this.ensureSyncDraft(draft, serviceId);
+      sync.lastAttemptAt = nowIso();
+      sync.lastError = message;
+      sync.caughtUp = false;
+      return { next: draft, result: undefined };
+    });
   }
 }

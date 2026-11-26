@@ -25,9 +25,11 @@ async function main(): Promise<void> {
     endpoints: clusterConfig?.services ?? [],
     requestTimeoutMs: clusterConfig?.requestTimeoutMs ?? 1200,
     reconcileIntervalMs: clusterConfig?.reconcileIntervalMs ?? 700,
+    timelineSegmentSize: clusterConfig?.timelineSegmentSize ?? 50,
   });
   await coordinator.start();
   coordinator.startPeriodicReconcile(clusterConfig?.reconcileIntervalMs ?? 700);
+  coordinator.startTimelineSync(clusterConfig?.timelineSyncIntervalMs ?? 1000);
 
   const server = createCoordinatorServer(coordinator);
   await new Promise<void>((resolve, reject) => {

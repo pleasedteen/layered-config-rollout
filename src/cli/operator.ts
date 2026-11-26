@@ -64,6 +64,36 @@ async function publish(payloadPath: string | undefined, base: string): Promise<v
   printReleaseSummary(result.body);
 }
 
+async function showTimeline(serviceId: string, base: string): Promise<void> {
+  const result = await fetchJson(`${base}/api/services/${encodeURIComponent(serviceId)}/timeline`);
+  if (result.status !== 200) throw new Error(result.text);
+  const view = result.body;
+  const sourceLabel = (source: any): string => {
+    if (!source || source.type === 'initial') return '服务初始值';
+    return `${source.releaseId}#${source.acceptedOrder}`;
+  };
+  console.log(`服务 ${view.serviceId} 配置生效时间线（实际生效顺序，共 ${view.count} 条）`);
+  const sync = view.sync;
+  if (sync) {
+    console.log(
+      `同步进度: lastSeq=${sync.lastSeq} remoteHeadSeq=${sync.remoteHeadSeq ?? '-'} ` +
+      `caughtUp=${sync.caughtUp} segments=${sync.segmentFetchCount}` +
+      (sync.lastError ? ` lastError=${sync.lastError}` : ''),
+    );
+  }
+  for (const record of view.timeline ?? []) {
+    console.log(`#${record.seq} ${record.action} ${record.releaseId} @${record.at}`);
+    for (const change of record.changes) {
+      const tag = !change.valueChanged && change.sourceChanged ? ' [值相同·来源变化]' : '';
+      console.log(
+        `  - ${change.routeId}.${change.configKey}: ` +
+        `${change.before.value}[${sourceLabel(change.before.source)}] -> ` +
+        `${change.after.value}[${sourceLabel(change.after.source)}]${tag}`,
+      );
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = positionals(argv)[0];
@@ -75,6 +105,8 @@ async function main(): Promise<void> {
   npm run op -- releases
   npm run op -- status <releaseId>
   npm run op -- config <serviceId> [routeId]
+  npm run op -- timeline <serviceId>
+  npm run op -- sync-timeline <serviceId>
   npm run op -- publish <payload.json|->
   npm run op -- pause <releaseId>
   npm run op -- resume <releaseId>
@@ -121,6 +153,32 @@ async function main(): Promise<void> {
 
   if (command === 'publish') {
     await publish(positionals(argv)[1], base);
+    return;
+  }
+
+  if (command === 'timeline' || command === 'tl') {
+    const serviceId = positionals(argv)[1];
+    if (!serviceId) throw new Error('timeline requires <serviceId>');
+    await showTimeline(serviceId, base);
+    return;
+  }
+
+  if (command === 'sync-timeline') {
+    const serviceId = positionals(argv)[1];
+    if (!serviceId) throw new Error('sync-timeline requires <serviceId>');
+    const result = await fetchJson(`${base}/api/services/${encodeURIComponent(serviceId)}/timeline/sync`, {
+      method: 'POST',
+    });
+    if (result.status !== 200) throw new Error(result.text);
+    console.log(JSON.stringify({
+      ok: result.body.ok,
+      lastSeq: result.body.lastSeq,
+      caughtUp: result.body.caughtUp,
+      fetchedCount: result.body.fetchedCount,
+      segments: result.body.segments?.map((s: any) => ({ afterSeq: s.afterSeq, returned: s.returned, nextSeq: s.nextSeq })),
+      error: result.body.error,
+    }, null, 2));
+    await showTimeline(serviceId, base);
     return;
   }
 

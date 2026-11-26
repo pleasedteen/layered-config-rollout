@@ -17,7 +17,7 @@ npm install
 npm test
 ```
 
-`npm test` 会先执行 TypeScript 构建，然后启动真实的协调器、3 个服务子进程和混沌代理，运行 13 项端到端检查并输出中文可读结果。当前环境完整命令约 6–10 秒，远低于 80 秒。
+`npm test` 会先执行 TypeScript 构建，然后启动真实的协调器、3 个服务子进程和混沌代理，运行 17 项端到端检查（含配置生效时间线的断联补收、重启续收、交叠发布后撤销三项演练）并输出中文可读结果。当前环境完整命令约 8 秒，远低于 80 秒。
 
 单独做类型检查/构建：
 
@@ -164,6 +164,87 @@ curl -s http://127.0.0.1:4301/__admin/releases/demo-timeout | jq
 ```bash
 curl -s http://127.0.0.1:4301/__admin/config | jq
 ```
+
+### 4.1 按服务查询“配置生效时间线”
+
+时间线以**服务实际物化生效的顺序**（服务本地连续递增的 `seq`）展示。一次
+accept 或一次 revoke 即使跨多条路由、多个配置键，也只合并成**一条**记录；
+记录内 `changes[]` 列出每个变化项的前后值与来源：
+
+```bash
+curl -s http://127.0.0.1:4100/api/services/checkout/timeline | jq
+npm run op -- timeline checkout
+```
+
+每个变化项的结构：
+
+```jsonc
+{
+  "routeId": "slow-quote",
+  "configKey": "timeoutMs",
+  "before": { "value": 500, "source": { "type": "initial" } },
+  "after":  { "value": 500, "source": { "type": "release", "releaseId": "rel-b", "acceptedOrder": 12, "coordinatorAcceptedAt": "..." } },
+  "valueChanged": false,   // 值相同
+  "sourceChanged": true    // 但来源从初始值/较早发布切到了 rel-b，仍会记录
+}
+```
+
+来源 `source` 只有两种：
+
+- `{ "type": "initial" }`：服务自己的路由初始值；
+- `{ "type": "release", "releaseId", "acceptedOrder", ... }`：某个已受理发布。
+
+因此：
+
+- 交叠发布写入相同值时，会留下“值相同、来源 A→B”的记录；
+- 撤销当前赢家 B 回落到较早发布 A 时，后来源是 `release/rel-a`；
+- 没有更早候选而回落到服务初始值时，后来源是 `initial`。
+
+时间线记录、生效配置和幂等响应在服务的**同一次原子文件事务**中写入，所以
+相同 `Idempotency-Key` 的重放直接返回首次响应（带
+`x-idempotent-replay: true`），不会产生新的时间线记录。
+
+服务端分段读取接口（协调器内部使用，也可直接调用）：
+
+```text
+GET /__admin/timeline?afterSeq=<已持有最大seq>&limit=<段大小>
+# 返回 { headSeq, nextSeq, records: seq > afterSeq 的至多 limit 条 }
+```
+
+### 4.2 断联补收、分段游标与重启续收
+
+协调器把已收集记录和每个服务的同步进度持久化在
+`coordinator-state.json` 的 `timelines` / `timelineSync` 中：
+
+```bash
+curl -s -X POST http://127.0.0.1:4100/api/services/checkout/timeline/sync | jq
+curl -s -X POST "http://127.0.0.1:4100/api/services/checkout/timeline/sync?maxSegments=1" | jq
+curl -s -X POST http://127.0.0.1:4100/api/timeline/sync | jq
+```
+
+补收规则：
+
+- 只请求 `afterSeq=<持久高水位>` 之后的缺失后缀，并按 `limit` 分段；
+- 每一段拉回后，记录去重（按 `serviceId + seq`）并与游标在**同一个协调器
+  原子状态事务**中落盘，然后才拉下一段；
+- 补收途中重启协调器，新进程启动时从磁盘游标自动续收，不回退到 `afterSeq=0`
+  全量重拉，因此不漏记、不重复；
+- 时间线查询只读协调器本地状态，服务再次离线时，已收集记录与
+  `sync.lastSeq / caughtUp / lastSuccessAt / lastError` 等进度仍可查询；
+  此时调用 sync 会返回 `ok:false` 与错误，但响应体仍带已收集的时间线。
+
+段大小由 `ClusterConfig.timelineSegmentSize`（默认 50）控制，周期同步间隔由
+`timelineSyncIntervalMs`（默认 1000ms，设为 0 关闭定时同步）控制。协调器重启
+时也会立即尝试一次全量续收。
+
+`npm test` 末尾会用独立的双服务真实子进程夹具（段大小 2）演练并打印：
+
+1. **演练一·断联补收**：时间线通道断联期间产生 5 条原子切换；恢复后按
+   `afterSeq=0,2,4` 三段补齐；服务再次停止后仍能查到 5 条记录与进度；
+2. **演练二·重启续收**：只补第 1 段（游标持久化为 7）后重启协调器，重启后
+   实际请求游标为 `7,9,11`，最终 seq `1..11` 连续、不重不漏；
+3. **演练三·交叠发布后撤销**：同值来源切换、撤销回落到较早发布、再撤销回落
+   初始值的完整前后值/来源，并验证 accept/revoke 幂等重放不增加记录。
 
 ## 5. 验证超时和限流真的生效
 
@@ -380,6 +461,10 @@ POST /api/releases/:id/reconcile
 POST /api/reconcile
 GET  /api/dashboard
 GET  /api/services/:serviceId/actual-config
+GET  /api/services/:serviceId/timeline
+GET  /api/timeline?serviceId=:serviceId
+POST /api/services/:serviceId/timeline/sync[?maxSegments=N]
+POST /api/timeline/sync
 ```
 
 服务：
@@ -388,6 +473,7 @@ GET  /api/services/:serviceId/actual-config
 GET  /health
 GET  /__admin/config
 GET  /__admin/config/:routeId
+GET  /__admin/timeline[?afterSeq=N&limit=M]
 GET  /__admin/releases/:releaseId
 GET  /__admin/state
 POST /__admin/releases/:releaseId/accept

@@ -63,6 +63,14 @@ export function createForwardServiceServer(service: ConfigService): http.Server 
           return;
         }
 
+        if (req.method === 'GET' && segments[1] === 'timeline') {
+          const afterSeq = Number(url.searchParams.get('afterSeq') ?? '0');
+          const limitParam = url.searchParams.get('limit');
+          const limit = limitParam === null ? undefined : Number(limitParam);
+          sendJson(res, 200, service.getTimeline({ afterSeq, limit }));
+          return;
+        }
+
         if (req.method === 'GET' && segments[1] === 'releases' && segments[2]) {
           const releaseId = decodeURIComponent(segments[2]);
           const release = service.getRelease(releaseId);

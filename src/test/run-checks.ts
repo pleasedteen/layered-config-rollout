@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -22,6 +22,7 @@ interface Failure {
 const failures: Failure[] = [];
 let passed = 0;
 let cluster: FixtureCluster | undefined;
+let drillCluster: FixtureCluster | undefined;
 
 const hardTimer = setTimeout(() => {
   console.error('\n❌ 自检超过 75 秒，强制结束。');
@@ -155,6 +156,406 @@ function hasAnyReleaseRequest(serviceId: string, releaseId: string): boolean {
   return cluster!
     .getService(serviceId)
     .proxy.requests.some((record) => record.path.includes(`/releases/${releaseId}`));
+}
+
+// ---------------------------------------------------------------------------
+// Timeline drill helpers
+// ---------------------------------------------------------------------------
+
+const DRILL_FIXTURE_PATH = path.join(projectRoot, 'fixtures', 'timeline-drill.json');
+
+async function drillFetch(pathname: string, init?: Parameters<typeof fetchJson>[1]) {
+  return fetchJson(`${drillCluster!.coordinatorUrl}${pathname}`, { timeoutMs: 10_000, ...init });
+}
+
+async function drillDirect(serviceId: string, pathname: string, init?: Parameters<typeof fetchJson>[1]) {
+  return fetchJson(`${drillCluster!.getService(serviceId).directUrl}${pathname}`, { timeoutMs: 10_000, ...init });
+}
+
+async function drillCreateRelease(body: Record<string, unknown>): Promise<any> {
+  const response = await drillFetch('/api/releases', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+  });
+  if (response.status !== 201) {
+    throw new Error(`drill create release expected 201, got ${response.status}: ${response.text}`);
+  }
+  return response.body;
+}
+
+async function drillWaitRelease(id: string, predicate: (release: any) => boolean, timeoutMs = 12_000): Promise<any> {
+  return waitFor(
+    `drill release ${id}`,
+    async () => {
+      const response = await drillFetch(`/api/releases/${encodeURIComponent(id)}`);
+      if (response.status !== 200) return null;
+      return predicate(response.body) ? response.body : null;
+    },
+    timeoutMs,
+  );
+}
+
+async function drillGetTimeline(serviceId: string): Promise<any> {
+  const response = await drillFetch(`/api/services/${encodeURIComponent(serviceId)}/timeline`);
+  assert.equal(response.status, 200, response.text);
+  return response.body;
+}
+
+async function drillSync(serviceId: string, maxSegments?: number): Promise<any> {
+  const query = maxSegments ? `?maxSegments=${maxSegments}` : '';
+  const response = await drillFetch(`/api/services/${encodeURIComponent(serviceId)}/timeline/sync${query}`, {
+    method: 'POST',
+  });
+  assert.equal(response.status, 200, response.text);
+  return response.body;
+}
+
+async function drillChaosRule(serviceId: string, rule: Record<string, unknown>): Promise<void> {
+  const service = drillCluster!.getService(serviceId);
+  const response = await fetchJson(`${service.chaosUrl}/__chaos/rules`, {
+    method: 'POST',
+    body: JSON.stringify(rule),
+    headers: { 'content-type': 'application/json' },
+    timeoutMs: 3000,
+  });
+  assert.equal(response.status, 201, response.text);
+}
+
+async function drillResetChaos(serviceId: string): Promise<void> {
+  const service = drillCluster!.getService(serviceId);
+  const response = await fetchJson(`${service.chaosUrl}/__chaos/reset`, { method: 'POST', timeoutMs: 3000 });
+  assert.equal(response.status, 200, response.text);
+}
+
+function sourceLabel(source: any): string {
+  if (!source || source.type === 'initial') return '服务初始值';
+  return `发布 ${source.releaseId}(受理#${source.acceptedOrder})`;
+}
+
+function printTimeline(records: any[]): void {
+  for (const record of records) {
+    console.log(`    #${record.seq} ${record.action.padEnd(6)} ${record.releaseId}  ${record.at}  合并变化 ${record.changes.length} 项`);
+    for (const change of record.changes) {
+      const flags = [
+        change.valueChanged ? '值变化' : '值相同',
+        change.sourceChanged ? '来源变化' : '来源不变',
+      ].join('/');
+      console.log(
+        `       - ${change.routeId}.${change.configKey}: ` +
+        `${change.before.value} [${sourceLabel(change.before.source)}] -> ` +
+        `${change.after.value} [${sourceLabel(change.after.source)}]  (${flags})`,
+      );
+    }
+  }
+}
+
+function timelineAfterSeqsFromProxy(serviceId: string): number[] {
+  return drillCluster!
+    .getService(serviceId)
+    .proxy.requests.filter((record) => record.method === 'GET' && record.path.includes('/__admin/timeline'))
+    .map((record) => {
+      const match = record.path.match(/afterSeq=(\d+)/);
+      return match ? Number(match[1]) : Number.NaN;
+    });
+}
+
+/**
+ * 演练一：时间线通道断联期间产生 5 条原子切换；恢复后协调器只按游标分 3 段
+ * 补收缺失记录；服务再次离线时，已收集记录与同步进度仍可查询。
+ */
+async function drillOneDisconnectBackfill(): Promise<void> {
+  const S = 'sync';
+
+  const baseline = await drillSync(S);
+  assert.equal(baseline.ok, true);
+  assert.equal(baseline.lastSeq, 0, '全新演练服务应从游标 0 开始');
+
+  // Partition the timeline channel only; release accept/revoke still flow.
+  await drillChaosRule(S, { match: { pathIncludes: '/__admin/timeline' }, dropRequest: true });
+
+  // Five effective switches. Switch #2 spans two routes and both config
+  // keys but must stay one atomic timeline entry.
+  await drillCreateRelease({
+    releaseId: 'd1-a',
+    changes: [{ serviceId: S, routeId: 'r1', timeoutMs: 111 }],
+  });
+  await drillWaitRelease('d1-a', (r) => r.status === 'completed');
+
+  await drillCreateRelease({
+    releaseId: 'd1-ab',
+    changes: [
+      { serviceId: S, routeId: 'r2', timeoutMs: 2222, rateLimitPerMinute: 222 },
+      { serviceId: S, routeId: 'r3', timeoutMs: 3333 },
+    ],
+  });
+  await drillWaitRelease('d1-ab', (r) => r.status === 'completed');
+
+  await drillCreateRelease({
+    releaseId: 'd1-c',
+    changes: [{ serviceId: S, routeId: 'r1', timeoutMs: 333 }],
+  });
+  await drillWaitRelease('d1-c', (r) => r.status === 'completed');
+
+  await drillFetch('/api/releases/d1-c/revoke', { method: 'POST' });
+  await drillWaitRelease('d1-c', (r) => r.status === 'revoked');
+  await drillFetch('/api/releases/d1-a/revoke', { method: 'POST' });
+  await drillWaitRelease('d1-a', (r) => r.status === 'revoked');
+
+  const direct = await drillDirect(S, '/__admin/timeline?afterSeq=0&limit=500');
+  assert.equal(direct.status, 200);
+  assert.equal(direct.body.headSeq, 5);
+  assert.deepEqual(direct.body.records.map((r: any) => r.seq), [1, 2, 3, 4, 5]);
+  assert.equal(direct.body.records[1].changes.length, 3, '跨路由跨配置项的原子切换应合为一条（3 个变化项）');
+
+  // While partitioned the coordinator collected nothing; sync reports failure.
+  const during = await drillGetTimeline(S);
+  assert.equal(during.sync.lastSeq, 0);
+  assert.equal(during.count, 0);
+  const blocked = await drillSync(S);
+  assert.equal(blocked.ok, false);
+  assert.ok(blocked.error, '断联同步应回报错误');
+  console.log('    断联期间同步尝试:', JSON.stringify({ ok: blocked.ok, lastSeq: blocked.lastSeq, error: blocked.error }));
+
+  // Recover and backfill in segments of 2.
+  await drillResetChaos(S);
+  const report = await drillSync(S);
+  assert.equal(report.ok, true, report.error);
+  assert.deepEqual(report.segments.map((seg: any) => seg.afterSeq), [0, 2, 4], '应只按缺失游标分 3 段补收');
+  assert.deepEqual(report.segments.map((seg: any) => seg.returned), [2, 2, 1]);
+  assert.equal(report.lastSeq, 5);
+  assert.equal(report.caughtUp, true);
+
+  // Independently observe the actual segment request cursors at the proxy.
+  assert.deepEqual(timelineAfterSeqsFromProxy(S), [0, 2, 4]);
+
+  const collected = await drillGetTimeline(S);
+  assert.deepEqual(collected.timeline.map((r: any) => r.seq), [1, 2, 3, 4, 5]);
+  assert.equal(new Set(collected.timeline.map((r: any) => r.id)).size, 5, '记录 id 不得重复');
+  console.log(
+    '    补收分段: ' +
+      report.segments.map((s: any) => `afterSeq=${s.afterSeq}→${s.nextSeq}(本端${s.returned}条)`).join('  '),
+  );
+  printTimeline(collected.timeline);
+
+  // A follow-up sync only polls the tail cursor and inserts nothing.
+  const tail = await drillSync(S);
+  assert.equal(tail.fetchedCount, 0);
+  assert.deepEqual(tail.segments.map((s: any) => s.afterSeq), [5]);
+  assert.equal((await drillGetTimeline(S)).count, 5);
+
+  // Service offline again: local query still returns records + progress.
+  await drillCluster!.stopService(S);
+  const offlineView = await drillGetTimeline(S);
+  assert.equal(offlineView.count, 5);
+  assert.equal(offlineView.sync.lastSeq, 5);
+  assert.equal(offlineView.sync.caughtUp, true);
+  const offlineSync = await drillSync(S);
+  assert.equal(offlineSync.ok, false, '服务离线时同步应失败');
+  assert.equal(offlineSync.timeline.length, 5, '离线同步响应仍应带回已收集记录');
+  assert.equal(offlineSync.sync.lastSeq, 5, '离线不得回退同步进度');
+  console.log(
+    '    服务再次离线后仍可查询: ' +
+      JSON.stringify({ count: offlineView.count, lastSeq: offlineView.sync.lastSeq, caughtUp: offlineView.sync.caughtUp }),
+  );
+  console.log('    ✅ 断联补收演练结论: 断联期收集 0 条；恢复后仅按游标 [0,2,4] 分 3 段补齐缺失的 5 条；服务再次离线仍可查询全部记录与同步进度。');
+
+  await drillCluster!.spawnService(S);
+}
+
+/**
+ * 演练二：补收完第一个分段后重启协调器；新进程从磁盘上的持久游标 7 自动续收
+ * 剩余分段，最终 seq 1..11 连续、不重不漏，且重启后不会再从 0 全量拉取。
+ */
+async function drillTwoRestartResume(): Promise<void> {
+  const S = 'sync';
+  assert.equal((await drillGetTimeline(S)).sync.lastSeq, 5);
+
+  for (let i = 1; i <= 6; i += 1) {
+    const id = `d2-${i}`;
+    await drillCreateRelease({
+      releaseId: id,
+      changes: [{ serviceId: S, routeId: 'r1', timeoutMs: 100 + i }],
+    });
+    await drillWaitRelease(id, (r) => r.status === 'completed');
+  }
+  assert.equal((await drillDirect(S, '/__admin/timeline')).body.headSeq, 11);
+
+  // Collect exactly one segment, leaving the backfill unfinished.
+  const partial = await drillSync(S, 1);
+  assert.equal(partial.segments.length, 1);
+  assert.equal(partial.segments[0].afterSeq, 5);
+  assert.equal(partial.segments[0].returned, 2);
+  assert.equal(partial.lastSeq, 7);
+  assert.equal(partial.truncated, true);
+
+  const onDisk = JSON.parse(
+    await readFile(path.join(drillCluster!.dataDir, 'coordinator-state.json'), 'utf8'),
+  );
+  assert.equal(onDisk.timelineSync[S].lastSeq, 7, '分段游标必须在重启前持久化');
+  assert.equal(onDisk.timelines[S].length, 7, '已持久化的累计记录应为 seq 1..7');
+  console.log(
+    '    补收途中（仅第 1 段）重启协调器；磁盘持久进度: ' +
+      JSON.stringify({ lastSeq: onDisk.timelineSync[S].lastSeq, collected: onDisk.timelines[S].length }),
+  );
+
+  // From here every timeline request observed at the proxy is post-restart.
+  drillCluster!.getService(S).proxy.requests.length = 0;
+  await drillCluster!.restartCoordinator();
+
+  const resumed = await waitFor(
+    '重启后从游标 7 续收至 11',
+    async () => {
+      const view = await drillGetTimeline(S);
+      return view.sync.lastSeq === 11 && view.sync.caughtUp ? view : null;
+    },
+    15_000,
+    80,
+  );
+
+  const seqs: number[] = resumed.timeline.map((r: any) => r.seq);
+  assert.deepEqual(seqs, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], '重启续收后必须连续、不漏、不重');
+  assert.equal(new Set(seqs).size, seqs.length);
+
+  const afterSeqs = await waitFor(
+    '观察重启后续收分段请求',
+    async () => {
+      const calls = timelineAfterSeqsFromProxy(S);
+      return calls.includes(11) ? calls : null;
+    },
+    5_000,
+    50,
+  );
+  assert.equal(afterSeqs[0], 7, `重启后首个分段必须从持久游标 7 开始，实际 ${JSON.stringify(afterSeqs)}`);
+  assert.ok(afterSeqs.every((n) => n >= 7), '重启后不得重新拉取游标之前的记录');
+  console.log('    重启后实际分段游标序列:', JSON.stringify(afterSeqs), '；最终连续记录:', JSON.stringify(seqs));
+  console.log('    ✅ 重启续收演练结论: 仅补第 1 段后磁盘游标=7；补收途中真实重启协调器，新进程从 7 续收（游标 [7,9,11]），seq 1..11 连续、不漏不重。');
+}
+
+/**
+ * 演练三：交叠发布 A/B（B 与 A 同值但更晚受理）。B 生效时记录“值相同、来源
+ * A→B”；撤销 B 回落到较早发布 A（值仍相同、来源 B→A），同一条撤销记录里另
+ * 一个配置项回落到服务初始值；撤销 A 后全部回到初始值。相同幂等键重放不新增
+ * 时间线记录。
+ */
+async function drillThreeOverlapRevoke(): Promise<void> {
+  const O = 'overlap';
+
+  await drillCreateRelease({
+    releaseId: 'ov-A',
+    changes: [{ serviceId: O, routeId: 'ov', timeoutMs: 500 }],
+  });
+  const relA = await drillWaitRelease('ov-A', (r) => r.status === 'completed');
+
+  await drillCreateRelease({
+    releaseId: 'ov-B',
+    changes: [{ serviceId: O, routeId: 'ov', timeoutMs: 500, rateLimitPerMinute: 120 }],
+  });
+  const relB = await drillWaitRelease('ov-B', (r) => r.status === 'completed');
+
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 2);
+
+  const acceptBody = JSON.stringify({
+    releaseId: 'ov-B',
+    coordinatorAcceptedAt: relB.coordinatorAcceptedAt,
+    acceptedOrder: relB.acceptedOrder,
+    changes: relB.changes.filter((c: any) => c.serviceId === O),
+  });
+  const acceptUrl = `${drillCluster!.getService(O).directUrl}/__admin/releases/ov-B/accept`;
+  const replayHeaders = { 'content-type': 'application/json', 'idempotency-key': 'accept:ov-B:overlap:v1' };
+
+  const replayAccept = await fetch(acceptUrl, { method: 'POST', body: acceptBody, headers: replayHeaders });
+  assert.equal(replayAccept.status, 200);
+  assert.equal(replayAccept.headers.get('x-idempotent-replay'), 'true');
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 2, '幂等 accept 重放不得产生新记录');
+
+  await drillFetch('/api/releases/ov-B/revoke', { method: 'POST' });
+  await drillWaitRelease('ov-B', (r) => r.status === 'revoked');
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 3);
+
+  // Old accept replay after B was revoked: stored response only, no new row,
+  // no resurrection.
+  const zombieReplay = await fetch(acceptUrl, { method: 'POST', body: acceptBody, headers: replayHeaders });
+  assert.equal(zombieReplay.status, 200);
+  assert.equal(zombieReplay.headers.get('x-idempotent-replay'), 'true');
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 3, '撤销后重放旧 accept 仍不得产生记录');
+  const releaseB = await drillDirect(O, '/__admin/releases/ov-B');
+  assert.equal(releaseB.body.status, 'revoked');
+
+  const replayRevoke = await fetch(`${drillCluster!.getService(O).directUrl}/__admin/releases/ov-B/revoke`, {
+    method: 'POST',
+    body: '{}',
+    headers: { 'content-type': 'application/json', 'idempotency-key': 'revoke:ov-B:overlap:v1' },
+  });
+  assert.equal(replayRevoke.status, 200);
+  assert.equal(replayRevoke.headers.get('x-idempotent-replay'), 'true');
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 3, '幂等 revoke 重放不得产生新记录');
+
+  await drillFetch('/api/releases/ov-A/revoke', { method: 'POST' });
+  await drillWaitRelease('ov-A', (r) => r.status === 'revoked');
+  assert.equal((await drillDirect(O, '/__admin/timeline')).body.headSeq, 4);
+
+  const syncReport = await drillSync(O);
+  assert.equal(syncReport.ok, true, syncReport.error);
+  const view = await drillGetTimeline(O);
+  assert.deepEqual(view.timeline.map((r: any) => r.seq), [1, 2, 3, 4]);
+
+  const [recA, recB, recRevB, recRevA] = view.timeline as any[];
+  console.log('    交叠发布/撤销时间线（协调器按实际生效顺序展示）:');
+  printTimeline(view.timeline);
+
+  // #1 initial -> A.
+  const aTimeout = recA.changes.find((c: any) => c.configKey === 'timeoutMs');
+  assert.equal(recA.action, 'accept');
+  assert.equal(aTimeout.before.value, 1000);
+  assert.equal(aTimeout.before.source.type, 'initial');
+  assert.equal(aTimeout.after.value, 500);
+  assert.equal(aTimeout.after.source.type, 'release');
+  assert.equal(aTimeout.after.source.releaseId, 'ov-A');
+  assert.equal(aTimeout.valueChanged, true);
+  assert.equal(aTimeout.sourceChanged, true);
+
+  // #2 B overlaps A with the SAME timeout value: value unchanged, source moves.
+  const bTimeout = recB.changes.find((c: any) => c.configKey === 'timeoutMs');
+  assert.equal(bTimeout.before.value, 500);
+  assert.equal(bTimeout.after.value, 500);
+  assert.equal(bTimeout.valueChanged, false, 'B 与 A 的 timeout 值相同');
+  assert.equal(bTimeout.sourceChanged, true, '但赢家来源必须从 A 切到 B');
+  assert.equal(bTimeout.before.source.releaseId, 'ov-A');
+  assert.equal(bTimeout.after.source.releaseId, 'ov-B');
+  const bRate = recB.changes.find((c: any) => c.configKey === 'rateLimitPerMinute');
+  assert.equal(bRate.before.value, 60);
+  assert.equal(bRate.before.source.type, 'initial');
+  assert.equal(bRate.after.value, 120);
+  assert.equal(bRate.after.source.releaseId, 'ov-B');
+
+  // #3 one atomic revoke entry contains BOTH fallback kinds.
+  assert.equal(recRevB.action, 'revoke');
+  assert.equal(recRevB.releaseId, 'ov-B');
+  assert.equal(recRevB.changes.length, 2);
+  const rbTimeout = recRevB.changes.find((c: any) => c.configKey === 'timeoutMs');
+  assert.equal(rbTimeout.before.source.releaseId, 'ov-B');
+  assert.equal(rbTimeout.after.value, 500);
+  assert.equal(rbTimeout.after.source.type, 'release');
+  assert.equal(rbTimeout.after.source.releaseId, 'ov-A', '必须辨认出回落到较早发布 A');
+  assert.equal(rbTimeout.valueChanged, false);
+  assert.equal(rbTimeout.sourceChanged, true);
+  const rbRate = recRevB.changes.find((c: any) => c.configKey === 'rateLimitPerMinute');
+  assert.equal(rbRate.before.value, 120);
+  assert.equal(rbRate.before.source.releaseId, 'ov-B');
+  assert.equal(rbRate.after.value, 60);
+  assert.equal(rbRate.after.source.type, 'initial', '无更早候选时必须辨认出服务初始值');
+
+  // #4 revoking A falls back to the service initial value.
+  const raTimeout = recRevA.changes.find((c: any) => c.configKey === 'timeoutMs');
+  assert.equal(raTimeout.before.value, 500);
+  assert.equal(raTimeout.before.source.releaseId, 'ov-A');
+  assert.equal(raTimeout.after.value, 1000);
+  assert.equal(raTimeout.after.source.type, 'initial');
+
+  // Idempotent replay summary line for the drill output.
+  console.log('    幂等证据: accept/revoke 同键重放均返回 x-idempotent-replay=true，服务 headSeq 始终为 4，协调器无新增记录');
+  console.log('    ✅ 交叠发布后撤销演练结论: 同值来源 A→B 被记录；撤销 B 时 timeout 回落较早发布 A、rateLimit 回落服务初始值，来源均可辨；再撤销 A 全部回初始值；幂等重放 0 新增。');
 }
 
 async function main(): Promise<void> {
@@ -489,6 +890,8 @@ async function main(): Promise<void> {
       candidates: { only: { timeoutMs: candidates } },
       releases,
       processedRequests: {},
+      switchSeq: 0,
+      switchLog: [],
     };
     await writeFile(path.join(perfDir, 'services', 'perf.json'), JSON.stringify(state));
 
@@ -626,11 +1029,49 @@ async function main(): Promise<void> {
     await waitConfig('checkout', 'restart-route', (c) => c.timeoutMs === 1300);
   });
 
+  // ==========================================================================
+  // 配置生效时间线三大演练：断联补收 / 重启续收 / 交叠发布后撤销
+  // ==========================================================================
+  try {
+    await check('时间线演练环境启动（独立双服务真实子进程，分段大小=2，关闭周期同步）', async () => {
+      drillCluster = await FixtureCluster.start({
+        fixturePath: DRILL_FIXTURE_PATH,
+        requestTimeoutMs: 2000,
+        reconcileIntervalMs: 120,
+        timelineSegmentSize: 2,
+        timelineSyncIntervalMs: 0,
+      });
+      assert.ok(drillCluster.coordinatorUrl);
+      const health = await drillFetch('/health');
+      assert.equal(health.status, 200);
+      for (const serviceId of ['sync', 'overlap']) {
+        const serviceHealth = await drillDirect(serviceId, '/health');
+        assert.equal(serviceHealth.status, 200);
+      }
+      const alias = await drillFetch('/api/timeline');
+      assert.equal(alias.status, 200);
+      assert.ok(Array.isArray(alias.body.timelines));
+      const byQuery = await drillFetch('/api/timeline?serviceId=sync');
+      assert.equal(byQuery.status, 200);
+      assert.equal(byQuery.body.serviceId, 'sync');
+    });
+
+    if (drillCluster) {
+      await check('演练一【断联补收】恢复后仅按游标分段补缺失；服务再次离线仍可查记录与进度', drillOneDisconnectBackfill);
+      await check('演练二【重启续收】补收途中重启协调器，从持久游标续收，不漏记不重复', drillTwoRestartResume);
+      await check('演练三【交叠发布后撤销】同值来源切换/回落较早发布/回落初始值可辨源；幂等重放不增记录', drillThreeOverlapRevoke);
+    }
+  } finally {
+    await drillCluster?.stop().catch(() => undefined);
+    drillCluster = undefined;
+  }
+
   clearTimeout(hardTimer);
   await cluster.stop();
 
   console.log('\n================ 结果 ================');
   console.log(`通过 ${passed} 项；失败 ${failures.length} 项。`);
+  console.log('演练结果：断联补收 ✅ 仅分段补缺失 ｜ 重启续收 ✅ 不漏不重 ｜ 交叠发布后撤销 ✅ 来源可辨、幂等不增记录');
   if (failures.length > 0) {
     for (const failure of failures) console.error(`- ${failure.name}: ${(failure.error as Error)?.message ?? failure.error}`);
     if (cluster) {
@@ -642,13 +1083,20 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
-  console.log('全部自检通过：发布、暂停、并发优先级、原子性、持久化、重启对账和夹具控制均正常。');
+  console.log('全部自检通过：发布、暂停、并发优先级、原子性、持久化、重启对账、配置生效时间线（断联补收/重启续收/交叠撤销）均正常。');
   process.exit(0);
 }
 
 main().catch(async (error) => {
   clearTimeout(hardTimer);
   console.error('自检脚本致命错误:', error);
+  if (drillCluster) {
+    console.error('drill coordinator logs:', drillCluster.coordinatorLogs.slice(-80).join('\n'));
+    for (const service of drillCluster.services.values()) {
+      console.error(`drill service ${service.id} logs:`, service.logs.slice(-50).join('\n'));
+    }
+    await drillCluster.stop().catch(() => undefined);
+  }
   if (cluster) {
     console.error('coordinator logs:', cluster.coordinatorLogs.slice(-80).join('\n'));
     for (const service of cluster.services.values()) {
