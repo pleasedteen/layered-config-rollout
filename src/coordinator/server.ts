@@ -144,14 +144,14 @@ setInterval(refresh, 1500);
 </body>
 </html>`;
 
-export function createCoordinatorServer(coordinator: Coordinator): http.Server {
+export function createCoordinatorServer(coordinator: Coordinator, instanceId?: string): http.Server {
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://coordinator.local');
       const segments = url.pathname.split('/').filter(Boolean);
 
       if (req.method === 'GET' && url.pathname === '/health') {
-        sendJson(res, 200, { ok: true, pid: process.pid });
+        sendJson(res, 200, { ok: true, pid: process.pid, instanceId });
         return;
       }
 

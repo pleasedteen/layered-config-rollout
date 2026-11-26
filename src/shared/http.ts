@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import net from 'node:net';
 
 export function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
   const json = JSON.stringify(body);
@@ -101,18 +102,106 @@ export async function fetchJson(
   }
 }
 
-export async function waitForHttpHealth(url: string, timeoutMs = 10_000): Promise<void> {
+/**
+ * Reports whether a fixed port already has a listening socket. This is only a
+ * pre-flight signal: the authoritative readiness signal is the spawned
+ * process's own health answer carrying its instance id (see
+ * waitForInstanceHealth). Nothing is closed or killed by this probe, so an
+ * existing occupant keeps running and answering.
+ */
+export function probePort(port: number, host = '127.0.0.1', timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const done = (occupied: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(occupied);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      done(true);
+    });
+    socket.once('error', () => {
+      clearTimeout(timer);
+      done(false);
+    });
+    socket.connect({ port, host });
+  });
+}
+
+export interface InstanceHealth {
+  status: number;
+  body: any;
+  text: string;
+}
+
+/**
+ * Waits for a health answer that belongs to THIS startup's process. A 200 from
+ * a pre-existing port occupant whose health body carries a different instance
+ * id (or no instance id) never satisfies the wait, and the child exiting
+ * early fails fast instead of polling until the deadline.
+ */
+export async function waitForInstanceHealth(
+  url: string,
+  instanceId: string,
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    didExit?: () => { exited: boolean; code?: number | null; signal?: NodeJS.Signals | null };
+    label?: string;
+  } = {},
+): Promise<void> {
+  const { timeoutMs = 15_000, signal, didExit, label = url } = options;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error('启动在组件就绪前被中断（Ctrl+C）');
+    const exit = didExit?.();
+    if (exit?.exited) {
+      throw new Error(
+        `${label} 进程在就绪前退出（code=${exit.code ?? ''} signal=${exit.signal ?? ''}）`,
+      );
+    }
+    let result: InstanceHealth;
     try {
-      const result = await fetchJson(`${url}/health`, { timeoutMs: 500 });
-      if (result.status === 200) return;
-      lastError = new Error(`health status ${result.status}; body=${result.text.slice(0, 200)}`);
+      result = await fetchJson(`${url}/health`, { timeoutMs: 500 });
     } catch (error) {
       lastError = error;
+      await abortableDelay(signal);
+      continue;
     }
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    if (result.status === 200 && result.body?.instanceId === instanceId) return;
+    if (result.status === 200) {
+      lastError = new Error(
+        `端口 ${new URL(url).port} 上的健康应答来自其他占用者（instanceId=${String(
+          result.body?.instanceId ?? 'none',
+        )}），不能算作本次启动就绪`,
+      );
+    } else {
+      lastError = new Error(`health status ${result.status}; body=${result.text.slice(0, 200)}`);
+    }
+    await abortableDelay(signal);
   }
-  throw new Error(`service at ${url} did not become healthy: ${String(lastError)}`);
+  throw new Error(`${label} 未在 ${timeoutMs}ms 内报告本次实例就绪: ${String(lastError)}`);
+}
+
+function abortableDelay(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('启动在组件就绪前被中断（Ctrl+C）'));
+      return;
+    }
+    const timer = setTimeout(resolve, 80);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new Error('启动在组件就绪前被中断（Ctrl+C）'));
+      },
+      { once: true },
+    );
+  });
 }

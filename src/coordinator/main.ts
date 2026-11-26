@@ -12,6 +12,7 @@ async function main(): Promise<void> {
   const fixturePath = path.resolve(requireStringArg(args, 'fixture'));
   const clusterConfigPath = args['cluster-config'];
   const port = numberArg(args, 'port', 4100);
+  const instanceId = typeof args['instance-id'] === 'string' ? args['instance-id'] : undefined;
 
   let clusterConfig: ClusterConfig | undefined;
   if (typeof clusterConfigPath === 'string') {
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
   await coordinator.start();
   coordinator.startPeriodicReconcile(clusterConfig?.reconcileIntervalMs ?? 700);
 
-  const server = createCoordinatorServer(coordinator);
+  const server = createCoordinatorServer(coordinator, instanceId);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => resolve());

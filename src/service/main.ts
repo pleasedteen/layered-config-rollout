@@ -9,6 +9,7 @@ async function main(): Promise<void> {
   const dataDir = requireStringArg(args, 'data-dir');
   const fixturePath = requireStringArg(args, 'fixture');
   const port = numberArg(args, 'port', 0);
+  const instanceId = typeof args['instance-id'] === 'string' ? args['instance-id'] : undefined;
 
   const fixture = await ConfigService.loadFixture(path.resolve(fixturePath));
   const configService = await ConfigService.start({
@@ -16,7 +17,7 @@ async function main(): Promise<void> {
     dataDir: path.resolve(dataDir),
     fixture,
   });
-  const server = createForwardServiceServer(configService);
+  const server = createForwardServiceServer(configService, instanceId);
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

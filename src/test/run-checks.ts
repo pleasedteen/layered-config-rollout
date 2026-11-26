@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { FixtureCluster } from '../fixture/cluster.js';
-import { fetchJson } from '../shared/http.js';
+import { FixtureCluster, getFreePorts } from '../fixture/cluster.js';
+import { fetchJson, probePort } from '../shared/http.js';
 import { delay } from '../shared/store.js';
 import { ConfigService } from '../service/config-service.js';
 import type { FixtureData, RouteConfig, ServicePersistentState } from '../shared/types.js';
@@ -128,6 +129,29 @@ async function waitConfig(
   );
 }
 
+function uniqueDataDir(label: string): string {
+  return path.join(
+    os.tmpdir(),
+    `route-startup-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+}
+
+/** A stand-in for a pre-existing process holding a fixed port. */
+function startForeignHealthServer(port: number, instanceId: string): Promise<http.Server> {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, pid: process.pid, instanceId }));
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function stopForeignServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
 async function addChaosRule(serviceId: string, rule: Record<string, unknown>): Promise<void> {
   const service = cluster!.getService(serviceId);
   const response = await fetchJson(`${service.chaosUrl}/__chaos/rules`, {
@@ -158,6 +182,152 @@ function hasAnyReleaseRequest(serviceId: string, releaseId: string): boolean {
 }
 
 async function main(): Promise<void> {
+  await check('固定控制口被占用时启动失败：不接管占用者、回收自身资源，随后可同口重试', async () => {
+    const ports = await getFreePorts(8);
+    const [controlPort, coordinatorPort, d1, c1, d2, c2, d3, c3] = ports;
+    const dataDir = uniqueDataDir('conflict');
+    const servicePorts = {
+      checkout: { direct: d1!, chaos: c1! },
+      payments: { direct: d2!, chaos: c2! },
+      risk: { direct: d3!, chaos: c3! },
+    };
+    // A foreign process already answers /health on the control port, mimicking
+    // a previous fixture instance still running.
+    const foreign = await startForeignHealthServer(controlPort!, 'foreign-occupant');
+    let failedCluster: FixtureCluster | undefined;
+    try {
+      const foreignBefore = await fetchJson(`http://127.0.0.1:${controlPort}/health`);
+      assert.equal(foreignBefore.status, 200);
+      assert.equal(foreignBefore.body.instanceId, 'foreign-occupant');
+
+      await assert.rejects(
+        () =>
+          FixtureCluster.start({
+            fixturePath: FIXTURE_PATH,
+            dataDir,
+            coordinatorPort,
+            controlPort,
+            servicePorts,
+          }),
+        (error: Error) => {
+          assert.ok(error.message.includes(String(controlPort)), `错误信息应指出冲突端口: ${error.message}`);
+          assert.ok(error.message.includes('占用'), `错误信息应可读地说明端口占用: ${error.message}`);
+          return true;
+        },
+      );
+
+      // The original occupant is untouched and keeps answering.
+      const foreignAfter = await fetchJson(`http://127.0.0.1:${controlPort}/health`);
+      assert.equal(foreignAfter.status, 200);
+      assert.equal(foreignAfter.body.instanceId, 'foreign-occupant');
+
+      // Nothing this failed startup acquired is still listening.
+      const conflictPorts: Array<[string, number]> = [
+        ['协调器', coordinatorPort!],
+        ['checkout 直连', d1!],
+        ['checkout 混沌', c1!],
+        ['payments 直连', d2!],
+        ['payments 混沌', c2!],
+        ['risk 直连', d3!],
+        ['risk 混沌', c3!],
+      ];
+      for (const [label, port] of conflictPorts) {
+        assert.equal(await probePort(port), false, `失败启动遗留了监听: ${label} :${port}`);
+      }
+
+      // Once the conflict is cleared, retrying with the exact same ports works.
+      await stopForeignServer(foreign);
+      failedCluster = await FixtureCluster.start({
+        fixturePath: FIXTURE_PATH,
+        dataDir,
+        coordinatorPort,
+        controlPort,
+        servicePorts,
+      });
+      const health = await fetchJson(`http://127.0.0.1:${coordinatorPort}/health`);
+      assert.equal(health.status, 200);
+      assert.equal(health.body.instanceId, failedCluster.instanceId, '健康应答必须来自本次启动的实例');
+      const checkout = await fetchJson(`http://127.0.0.1:${d1}/health`);
+      assert.equal(checkout.body.instanceId, failedCluster.instanceId);
+    } finally {
+      await failedCluster?.stop().catch(() => undefined);
+      if (foreign.listening) await stopForeignServer(foreign).catch(() => undefined);
+      await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  await check('部分服务已启动后中断：回收本次全部进程与监听，不影响重试', async () => {
+    const ports = await getFreePorts(7);
+    const [coordinatorPort, d1, c1, d2, c2, d3, c3] = ports;
+    const dataDir = uniqueDataDir('abort');
+    const servicePorts = {
+      checkout: { direct: d1!, chaos: c1! },
+      payments: { direct: d2!, chaos: c2! },
+      risk: { direct: d3!, chaos: c3! },
+    };
+    const abortController = new AbortController();
+    let interrupted: FixtureCluster | undefined;
+    try {
+      const startPromise = FixtureCluster.start({
+        fixturePath: FIXTURE_PATH,
+        dataDir,
+        coordinatorPort,
+        servicePorts,
+        startupSignal: abortController.signal,
+        // Ctrl+C arrives after the first service (checkout) is healthy but
+        // before payments/risk and the coordinator have been started.
+        onServiceStarted: (serviceId) => {
+          if (serviceId === 'checkout') abortController.abort();
+        },
+      });
+      await assert.rejects(startPromise, (error: Error) => {
+        assert.ok(
+          error.message.includes('中断') || error.message.includes('Ctrl+C'),
+          `中断错误应可读: ${error.message}`,
+        );
+        return true;
+      });
+
+      // Every listener acquired by this startup — including the ready
+      // checkout service and its chaos proxy — must have been reclaimed.
+      const abortedPorts: Array<[string, number]> = [
+        ['协调器', coordinatorPort!],
+        ['checkout 直连', d1!],
+        ['checkout 混沌', c1!],
+        ['payments 直连', d2!],
+        ['payments 混沌', c2!],
+        ['risk 直连', d3!],
+        ['risk 混沌', c3!],
+      ];
+      for (const [label, port] of abortedPorts) {
+        assert.equal(await probePort(port), false, `中断后仍有监听未回收: ${label} :${port}`);
+      }
+
+      // The same fixed ports come back up cleanly on retry.
+      interrupted = await FixtureCluster.start({
+        fixturePath: FIXTURE_PATH,
+        dataDir,
+        coordinatorPort,
+        servicePorts,
+      });
+      assert.equal(interrupted.services.size, 3);
+      const health = await fetchJson(`http://127.0.0.1:${coordinatorPort}/health`);
+      assert.equal(health.body.instanceId, interrupted.instanceId);
+      for (const [serviceId, directPort] of [
+        ['checkout', d1!],
+        ['payments', d2!],
+        ['risk', d3!],
+      ] as const) {
+        const response = await fetchJson(`http://127.0.0.1:${directPort}/health`);
+        assert.equal(response.status, 200, `${serviceId} 重试后应就绪`);
+        assert.equal(response.body.instanceId, interrupted.instanceId);
+      }
+    } finally {
+      await interrupted?.stop().catch(() => undefined);
+      await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   console.log('启动自带数据的本地夹具（真实 Node 子进程 + 混沌代理）...');
   cluster = await FixtureCluster.start({
     fixturePath: FIXTURE_PATH,

@@ -7,7 +7,10 @@ interface RateWindow {
   resetAt: number;
 }
 
-export function createForwardServiceServer(service: ConfigService): http.Server {
+export function createForwardServiceServer(
+  service: ConfigService,
+  instanceId?: string,
+): http.Server {
   const rateWindows = new Map<string, RateWindow>();
 
   function resetRateLimits(): void {
@@ -36,7 +39,7 @@ export function createForwardServiceServer(service: ConfigService): http.Server 
       const segments = url.pathname.split('/').filter(Boolean);
 
       if (req.method === 'GET' && url.pathname === '/health') {
-        sendJson(res, 200, { ok: true, serviceId: service.definition.id, pid: process.pid });
+        sendJson(res, 200, { ok: true, serviceId: service.definition.id, pid: process.pid, instanceId });
         return;
       }
 
