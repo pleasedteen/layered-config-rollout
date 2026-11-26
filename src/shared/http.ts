@@ -10,7 +10,7 @@ export function sendJson(res: ServerResponse, statusCode: number, body: unknown)
   res.end(json);
 }
 
-export async function readJsonBody(req: IncomingMessage, maxBytes = 4 * 1024 * 1024): Promise<unknown> {
+export async function readRawBody(req: IncomingMessage, maxBytes = 4 * 1024 * 1024): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -21,10 +21,15 @@ export async function readJsonBody(req: IncomingMessage, maxBytes = 4 * 1024 * 1
     }
     chunks.push(buffer);
   }
-  if (chunks.length === 0) return {};
-  const raw = Buffer.concat(chunks).toString('utf8');
+  if (chunks.length === 0) return Buffer.alloc(0);
+  return Buffer.concat(chunks);
+}
+
+export async function readJsonBody(req: IncomingMessage, maxBytes = 4 * 1024 * 1024): Promise<unknown> {
+  const raw = await readRawBody(req, maxBytes);
+  if (raw.length === 0) return {};
   try {
-    return JSON.parse(raw) as unknown;
+    return JSON.parse(raw.toString('utf8')) as unknown;
   } catch {
     throw new Error('request body must be valid JSON');
   }
@@ -76,7 +81,7 @@ export function numberArg(
 export async function fetchJson(
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},
-): Promise<{ status: number; body: any; text: string }> {
+): Promise<{ status: number; body: any; text: string; headers: Record<string, string> }> {
   const { timeoutMs = 5000, headers, ...rest } = init;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
@@ -87,6 +92,10 @@ export async function fetchJson(
       signal: controller.signal,
     });
     const text = await response.text();
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
     let body: any = null;
     if (text) {
       try {
@@ -95,7 +104,7 @@ export async function fetchJson(
         body = { raw: text };
       }
     }
-    return { status: response.status, body, text };
+    return { status: response.status, body, text, headers: responseHeaders };
   } finally {
     clearTimeout(timer);
   }

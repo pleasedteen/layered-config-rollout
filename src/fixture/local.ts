@@ -54,8 +54,7 @@ async function main(): Promise<void> {
         return;
       }
 
-      if (req.method === 'GET' && url.pathname === '/state') {
-        sendJson(res, 200, {
+      if (req.method === 'GET' && url.pathname === '/state') {        sendJson(res, 200, {
           coordinator: {
             url: cluster.coordinatorUrl,
             pid: cluster.coordinatorChild?.pid,
@@ -69,6 +68,26 @@ async function main(): Promise<void> {
             chaosUrl: service.chaosUrl,
             chaos: { globalPolicy: service.proxy.globalPolicy, rules: service.proxy.rules },
           })),
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/credentials') {
+        const auth = await cluster.authStore!.read();
+        sendJson(res, 200, { ok: true, credentialsPath: cluster.authStore!.filePath, auth });
+        return;
+      }
+
+      if (segments[0] === 'credentials' && segments[1] && segments[2] === 'rotate' && req.method === 'POST') {
+        const serviceId = decodeURIComponent(segments[1]);
+        const body = (await readJsonBody(req).catch(() => ({}))) as { which?: string };
+        const which = body.which === 'request' || body.which === 'receipt' ? body.which : 'both';
+        const result = await cluster.rotateCredential(serviceId, which);
+        sendJson(res, 200, {
+          ok: true,
+          serviceId,
+          which: result.which,
+          active: { requestKeyId: result.after.request.keyId, receiptKeyId: result.after.receipt.keyId },
         });
         return;
       }

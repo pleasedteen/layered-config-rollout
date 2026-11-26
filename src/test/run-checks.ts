@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import http from 'node:http';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -8,6 +9,14 @@ import { FixtureCluster } from '../fixture/cluster.js';
 import { fetchJson } from '../shared/http.js';
 import { delay } from '../shared/store.js';
 import { ConfigService } from '../service/config-service.js';
+import { Coordinator } from '../coordinator/coordinator.js';
+import { InMemoryAuthProvider } from '../shared/credentials.js';
+import {
+  signReceiptHeaders,
+  signRequestHeaders,
+  verifyReceiptSignature,
+} from '../shared/auth.js';
+import type { Credential, SignedRequestHeaders } from '../shared/auth.js';
 import type { FixtureData, RouteConfig, ServicePersistentState } from '../shared/types.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -106,8 +115,68 @@ function serviceUrl(serviceId: string): string {
   return cluster!.getService(serviceId).directUrl;
 }
 
-async function directFetch(serviceId: string, pathname: string, init?: Parameters<typeof fetchJson>[1]) {
+async function directFetch(serviceId: string, pathname: string, init: Record<string, any> = {}) {
+  // The release query endpoint requires the same mutual auth as writes, so
+  // automatically sign any /__admin/releases request with the active key.
+  if (pathname.startsWith('/__admin/releases/')) {
+    const method = String(init.method ?? 'GET').toUpperCase();
+    const body =
+      typeof init.body === 'string' ? init.body : init.body === undefined || init.body === null ? '' : JSON.stringify(init.body);
+    const incomingHeaders = (init.headers ?? {}) as Record<string, unknown>;
+    const idemHeader = incomingHeaders['idempotency-key'];
+    const idempotencyKey = Array.isArray(idemHeader) ? String(idemHeader[0] ?? '') : idemHeader === undefined ? undefined : String(idemHeader);
+    const signature = await caHeaders(serviceId, {
+      pathname: pathname.split('?')[0]!,
+      method,
+      body,
+      idempotencyKey,
+    });
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(incomingHeaders)) {
+      if (typeof value === 'string') headers[key] = value;
+    }
+    Object.assign(headers, signature);
+    return fetchJson(`${serviceUrl(serviceId)}${pathname}`, { timeoutMs: 5000, ...init, method, headers });
+  }
   return fetchJson(`${serviceUrl(serviceId)}${pathname}`, { timeoutMs: 5000, ...init });
+}
+
+/** Signs a direct-to-service request with the cluster's active request key. */
+async function caHeaders(
+  serviceId: string,
+  params: { pathname: string; method?: string; body?: string; idempotencyKey?: string },
+): Promise<SignedRequestHeaders> {
+  const credential = await cluster!.authStore!.requestCredential(serviceId);
+  return signRequestHeaders({
+    credential,
+    senderId: cluster!.authStore!.coordinatorId,
+    targetServiceId: serviceId,
+    method: params.method ?? 'POST',
+    pathname: params.pathname,
+    body: params.body ?? '',
+    idempotencyKey: params.idempotencyKey,
+  });
+}
+
+/** Performs a signed direct fetch against a service admin endpoint. */
+async function signedDirectFetch(
+  serviceId: string,
+  pathname: string,
+  init: { method?: string; body?: string; idempotencyKey?: string } = {},
+) {
+  const method = init.method ?? 'POST';
+  const headers = await caHeaders(serviceId, {
+    pathname,
+    method,
+    body: init.body ?? '',
+    idempotencyKey: init.idempotencyKey,
+  });
+  return fetchJson(`${serviceUrl(serviceId)}${pathname}`, {
+    method,
+    timeoutMs: 5000,
+    body: init.body,
+    headers: { ...headers, 'content-type': 'application/json', ...(init.idempotencyKey ? { 'idempotency-key': init.idempotencyKey } : {}) },
+  });
 }
 
 async function waitConfig(
@@ -367,17 +436,17 @@ async function main(): Promise<void> {
   });
 
   await check('整组修改原子接纳；非法组全部不生效；同键重放返回首次结果', async () => {
-    const bad = await directFetch('checkout', '/__admin/releases/rel-atomic-bad/accept', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-bad-atomic' },
-      body: JSON.stringify({
-        coordinatorAcceptedAt: new Date().toISOString(),
-        acceptedOrder: 999_001,
-        changes: [
-          { serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 111 },
-          { serviceId: 'checkout', routeId: 'missing-route', timeoutMs: 222 },
-        ],
-      }),
+    const badBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_001,
+      changes: [
+        { serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 111 },
+        { serviceId: 'checkout', routeId: 'missing-route', timeoutMs: 222 },
+      ],
+    });
+    const bad = await signedDirectFetch('checkout', '/__admin/releases/rel-atomic-bad/accept', {
+      body: badBody,
+      idempotencyKey: 'key-bad-atomic',
     });
     assert.equal(bad.status, 400);
     const unchanged = await directFetch('checkout', '/__admin/config/atomic-a');
@@ -393,18 +462,29 @@ async function main(): Promise<void> {
         { serviceId: 'checkout', routeId: 'atomic-b', timeoutMs: 333 },
       ],
     });
-    const first = await fetch(`${cluster!.getService('checkout').directUrl}/__admin/releases/rel-atomic-good/accept`, {
+    const goodPath = '/__admin/releases/rel-atomic-good/accept';
+    // One signed envelope is replayed byte-for-byte with the same idempotency key.
+    const goodHeaders = {
+      ...(await caHeaders('checkout', {
+        pathname: goodPath,
+        body,
+        idempotencyKey: 'key-good-atomic',
+      })),
+      'content-type': 'application/json',
+      'idempotency-key': 'key-good-atomic',
+    };
+    const first = await fetch(`${cluster!.getService('checkout').directUrl}${goodPath}`, {
       method: 'POST',
       body,
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-good-atomic' },
+      headers: goodHeaders,
     });
     assert.equal(first.status, 200);
     assert.equal(first.headers.get('x-idempotent-replay'), null);
 
-    const second = await fetch(`${cluster!.getService('checkout').directUrl}/__admin/releases/rel-atomic-good/accept`, {
+    const second = await fetch(`${cluster!.getService('checkout').directUrl}${goodPath}`, {
       method: 'POST',
       body,
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-good-atomic' },
+      headers: goodHeaders,
     });
     assert.equal(second.status, 200);
     assert.equal(second.headers.get('x-idempotent-replay'), 'true');
@@ -417,31 +497,53 @@ async function main(): Promise<void> {
 
   await check('撤销后的旧 accept 请求按原幂等结果重放，不会复活已撤销发布', async () => {
     const url = cluster!.getService('checkout').directUrl;
+    const acceptPath = '/__admin/releases/rel-zombie/accept';
+    const revokePath = '/__admin/releases/rel-zombie/revoke';
     const acceptBody = JSON.stringify({
       coordinatorAcceptedAt: new Date().toISOString(),
       acceptedOrder: 999_003,
       changes: [{ serviceId: 'checkout', routeId: 'customer-profile', timeoutMs: 444 }],
     });
-    const accept = await fetch(`${url}/__admin/releases/rel-zombie/accept`, {
+    // Sign once: the exact captured request (same signature/nonce) is replayed.
+    const acceptHeaders = {
+      ...(await caHeaders('checkout', {
+        pathname: acceptPath,
+        body: acceptBody,
+        idempotencyKey: 'key-zombie-accept',
+      })),
+      'content-type': 'application/json',
+      'idempotency-key': 'key-zombie-accept',
+    };
+    const accept = await fetch(`${url}${acceptPath}`, {
       method: 'POST',
       body: acceptBody,
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-zombie-accept' },
+      headers: acceptHeaders,
     });
     assert.equal(accept.status, 200);
     await waitConfig('checkout', 'customer-profile', (c) => c.timeoutMs === 444);
 
-    const revoke = await fetch(`${url}/__admin/releases/rel-zombie/revoke`, {
+    const revokeBody = '{}';
+    const revokeHeaders = {
+      ...(await caHeaders('checkout', {
+        pathname: revokePath,
+        body: revokeBody,
+        idempotencyKey: 'key-zombie-revoke',
+      })),
+      'content-type': 'application/json',
+      'idempotency-key': 'key-zombie-revoke',
+    };
+    const revoke = await fetch(`${url}${revokePath}`, {
       method: 'POST',
-      body: '{}',
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-zombie-revoke' },
+      body: revokeBody,
+      headers: revokeHeaders,
     });
     assert.equal(revoke.status, 200);
     await waitConfig('checkout', 'customer-profile', (c) => c.timeoutMs === 700);
 
-    const replay = await fetch(`${url}/__admin/releases/rel-zombie/accept`, {
+    const replay = await fetch(`${url}${acceptPath}`, {
       method: 'POST',
       body: acceptBody,
-      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-zombie-accept' },
+      headers: acceptHeaders,
     });
     assert.equal(replay.status, 200);
     assert.equal(replay.headers.get('x-idempotent-replay'), 'true');
@@ -626,6 +728,581 @@ async function main(): Promise<void> {
     await waitConfig('checkout', 'restart-route', (c) => c.timeoutMs === 1300);
   });
 
+  await check('双向认证·错投：无凭证/投错服务/篡改目标的写入一律拒绝且不落盘', async () => {
+    // (1) Completely unsigned write must be rejected before any state access.
+    const anonPath = '/__admin/releases/rel-misdirect-anon/accept';
+    const anonBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_101,
+      changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 888 }],
+    });
+    const beforeAnon = (await directFetch('checkout', '/__admin/config/atomic-a')).body.effective.timeoutMs as number;
+    const anon = await fetch(`${serviceUrl('checkout')}${anonPath}`, {
+      method: 'POST',
+      body: anonBody,
+      headers: { 'content-type': 'application/json' },
+    });
+    assert.equal(anon.status, 401, '无凭证 accept 必须是 401');
+    const afterAnon = (await directFetch('checkout', '/__admin/config/atomic-a')).body.effective.timeoutMs as number;
+    assert.equal(afterAnon, beforeAnon, '无凭证写入不得改变配置');
+    assert.equal((await directFetch('checkout', '/__admin/releases/rel-misdirect-anon')).status, 404);
+
+    // Unsigned revoke is rejected too.
+    const anonRevoke = await fetch(`${serviceUrl('checkout')}/__admin/releases/rel-misdirect-anon/revoke`, {
+      method: 'POST',
+      body: '{}',
+      headers: { 'content-type': 'application/json' },
+    });
+    assert.equal(anonRevoke.status, 401);
+
+    // Reconciliation query is also mutually authenticated: no signature -> 401.
+    const anonQuery = await fetch(`${serviceUrl('checkout')}/__admin/releases/rel-misdirect-anon`);
+    assert.equal(anonQuery.status, 401, '未签名的对账查询必须被拒绝');
+
+    // (2) A checkout-signed envelope physically delivered to payments (错投).
+    const crossCheckoutPath = '/__admin/releases/rel-misdirect-cross/accept';
+    const crossCheckoutBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_102,
+      changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 889 }],
+    });
+    const crossCheckoutHeaders = await caHeaders('checkout', {
+      pathname: crossCheckoutPath,
+      body: crossCheckoutBody,
+      idempotencyKey: 'accept:rel-misdirect-cross:checkout:v1',
+    });
+    const paymentsBefore = (await directFetch('payments', '/__admin/config/ledger-entries')).body.effective.timeoutMs as number;
+    const deliveredToPayments = await fetch(`${serviceUrl('payments')}${crossCheckoutPath}`, {
+      method: 'POST',
+      body: crossCheckoutBody,
+      headers: {
+        ...crossCheckoutHeaders,
+        'content-type': 'application/json',
+        'idempotency-key': 'accept:rel-misdirect-cross:checkout:v1',
+      },
+    });
+    assert.ok(
+      [401, 403].includes(deliveredToPayments.status),
+      `checkout 凭证错投到 payments 应拒绝，实际 ${deliveredToPayments.status}`,
+    );
+    const paymentsAfter = (await directFetch('payments', '/__admin/config/ledger-entries')).body.effective.timeoutMs as number;
+    assert.equal(paymentsAfter, paymentsBefore, '错投不得改变目标服务配置');
+    assert.equal((await directFetch('payments', '/__admin/releases/rel-misdirect-cross')).status, 404);
+
+    // (3) A payments-signed envelope delivered to checkout.
+    const crossPaymentsPath = '/__admin/releases/rel-misdirect-cross2/accept';
+    const crossPaymentsBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_103,
+      changes: [{ serviceId: 'payments', routeId: 'ledger-entries', timeoutMs: 890 }],
+    });
+    const crossPaymentsHeaders = await caHeaders('payments', {
+      pathname: crossPaymentsPath,
+      body: crossPaymentsBody,
+      idempotencyKey: 'accept:rel-misdirect-cross2:payments:v1',
+    });
+    const checkoutBefore = (await directFetch('checkout', '/__admin/config/atomic-b')).body.effective.timeoutMs as number;
+    const deliveredToCheckout = await fetch(`${serviceUrl('checkout')}${crossPaymentsPath}`, {
+      method: 'POST',
+      body: crossPaymentsBody,
+      headers: {
+        ...crossPaymentsHeaders,
+        'content-type': 'application/json',
+        'idempotency-key': 'accept:rel-misdirect-cross2:payments:v1',
+      },
+    });
+    assert.ok([401, 403].includes(deliveredToCheckout.status));
+    const checkoutAfter = (await directFetch('checkout', '/__admin/config/atomic-b')).body.effective.timeoutMs as number;
+    assert.equal(checkoutAfter, checkoutBefore, '反向错投也不得改变配置');
+    assert.equal((await directFetch('checkout', '/__admin/releases/rel-misdirect-cross2')).status, 404);
+
+    // (4) Valid signature, but the plaintext target header is tampered with.
+    const tamperPath = '/__admin/releases/rel-misdirect-tamper/accept';
+    const tamperBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_104,
+      changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 891 }],
+    });
+    const tamperHeaders = await caHeaders('checkout', {
+      pathname: tamperPath,
+      body: tamperBody,
+      idempotencyKey: 'accept:rel-misdirect-tamper:checkout:v1',
+    });
+    const tampered = await fetch(`${serviceUrl('checkout')}${tamperPath}`, {
+      method: 'POST',
+      body: tamperBody,
+      headers: {
+        ...tamperHeaders,
+        'x-ca-target': 'risk',
+        'content-type': 'application/json',
+        'idempotency-key': 'accept:rel-misdirect-tamper:checkout:v1',
+      },
+    });
+    assert.equal(tampered.status, 401, '篡改目标头导致签名失效，必须 401');
+    assert.equal((await directFetch('checkout', '/__admin/releases/rel-misdirect-tamper')).status, 404);
+
+    // (5) Properly authenticated envelope to checkout whose BODY nevertheless
+    // carries another service's change: the service refuses the foreign change.
+    const foreignChangePath = '/__admin/releases/rel-misdirect-body/accept';
+    const foreignChangeBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_105,
+      changes: [{ serviceId: 'payments', routeId: 'refund', timeoutMs: 892 }],
+    });
+    const foreignChange = await signedDirectFetch('checkout', foreignChangePath, {
+      body: foreignChangeBody,
+      idempotencyKey: 'key-misdirect-body',
+    });
+    assert.equal(foreignChange.status, 400, '非本服务的变更必须被业务校验拒绝');
+    assert.equal((await directFetch('checkout', '/__admin/releases/rel-misdirect-body')).status, 404);
+
+    // (6) A signed reconcile query gets a receipt that verifies under the
+    // target service's active receipt key and binds the request nonce.
+    const queryPath = '/__admin/releases/rel-delta-payload';
+    const queryHeaders = await caHeaders('checkout', { pathname: queryPath, method: 'GET' });
+    const query = await fetchJson(`${serviceUrl('checkout')}${queryPath}`, {
+      method: 'GET',
+      headers: { ...queryHeaders },
+      timeoutMs: 5000,
+    });
+    assert.equal(query.status, 200);
+    const queryReceiptCredential = await cluster!.authStore!.receiptCredential('checkout');
+    const queryReceipt = verifyReceiptSignature({
+      headers: query.headers,
+      rawBody: query.text,
+      statusCode: query.status,
+      credential: queryReceiptCredential,
+      expected: {
+        serviceId: 'checkout',
+        nonce: queryHeaders['x-ca-nonce'],
+        method: 'GET',
+        pathname: queryPath,
+      },
+    });
+    assert.equal(queryReceipt.ok, true, `真实服务查询回执应变验通过: ${queryReceipt.ok ? '' : queryReceipt.error}`);
+    const wrongNonceReceipt = verifyReceiptSignature({
+      headers: query.headers,
+      rawBody: query.text,
+      statusCode: query.status,
+      credential: queryReceiptCredential,
+      expected: { serviceId: 'checkout', nonce: 'different-nonce', method: 'GET', pathname: queryPath },
+    });
+    assert.equal(wrongNonceReceipt.ok, false, 'nonce 不匹配的真实回执必须失败');
+  });
+
+  await check('双向认证·可信回执：伪造/错服务/错 nonce 的回执不能确认动作', async () => {
+    // In-process coordinator pointed at a rogue "checkout" endpoint whose
+    // receipt behaviour can be switched between forged and properly signed.
+    const rogueAuth = new InMemoryAuthProvider(['checkout', 'payments']);
+    const checkoutReceipt = await rogueAuth.receiptCredential('checkout');
+    const paymentsReceipt = await rogueAuth.receiptCredential('payments');
+    type RoguePhase = 'unsigned' | 'wrong-service' | 'bad-nonce' | 'valid';
+    let phase: RoguePhase = 'unsigned';
+
+    const rogue = http.createServer(async (req, res) => {
+      const rogueUrl = new URL(req.url ?? '/', 'http://rogue.local');
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      void Buffer.concat(chunks);
+      const requestNonce = typeof req.headers['x-ca-nonce'] === 'string' ? req.headers['x-ca-nonce'] : '';
+      const payload = JSON.stringify({
+        ok: true,
+        serviceId: 'checkout',
+        releaseId: 'rel-rogue-receipt',
+        status: 'active',
+        serviceAcceptedAt: new Date().toISOString(),
+      });
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (phase === 'wrong-service') {
+        Object.assign(
+          headers,
+          signReceiptHeaders({
+            credential: paymentsReceipt,
+            serviceId: 'payments',
+            nonce: requestNonce,
+            method: req.method ?? 'POST',
+            pathname: rogueUrl.pathname,
+            statusCode: 200,
+            body: payload,
+          }),
+        );
+      } else if (phase === 'bad-nonce') {
+        Object.assign(
+          headers,
+          signReceiptHeaders({
+            credential: checkoutReceipt,
+            serviceId: 'checkout',
+            nonce: `not-the-request-nonce-${requestNonce}`,
+            method: req.method ?? 'POST',
+            pathname: rogueUrl.pathname,
+            statusCode: 200,
+            body: payload,
+          }),
+        );
+      } else if (phase === 'valid') {
+        Object.assign(
+          headers,
+          signReceiptHeaders({
+            credential: checkoutReceipt,
+            serviceId: 'checkout',
+            nonce: requestNonce,
+            method: req.method ?? 'POST',
+            pathname: rogueUrl.pathname,
+            statusCode: 200,
+            body: payload,
+          }),
+        );
+      }
+      res.writeHead(200, headers);
+      res.end(payload);
+    });
+    await new Promise<void>((resolve) => rogue.listen(0, '127.0.0.1', resolve));
+    const roguePort = (rogue.address() as { port: number }).port;
+
+    const rogueDir = await mkdtemp(path.join(os.tmpdir(), 'route-rogue-'));
+    const rogueCoordinator = new Coordinator({
+      dataDir: rogueDir,
+      fixture: cluster!.fixture,
+      endpoints: [{ id: 'checkout', baseUrl: `http://127.0.0.1:${roguePort}` }],
+      auth: rogueAuth,
+      requestTimeoutMs: 1000,
+      retryDelayMs: 30,
+    });
+    await rogueCoordinator.start();
+
+    try {
+      await rogueCoordinator.createRelease({
+        releaseId: 'rel-rogue-receipt',
+        changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 7777 }],
+      });
+
+      await delay(450);
+      assert.notEqual(
+        rogueCoordinator.getRelease('rel-rogue-receipt').services.checkout?.status,
+        'accepted',
+        '无签名回执不得确认',
+      );
+
+      phase = 'wrong-service';
+      await delay(350);
+      assert.notEqual(
+        rogueCoordinator.getRelease('rel-rogue-receipt').services.checkout?.status,
+        'accepted',
+        '其他服务凭证签署的错投回执不得确认目标服务动作',
+      );
+
+      phase = 'bad-nonce';
+      await delay(350);
+      assert.notEqual(
+        rogueCoordinator.getRelease('rel-rogue-receipt').services.checkout?.status,
+        'accepted',
+        'nonce 与当前请求不匹配的回执不得确认',
+      );
+
+      phase = 'valid';
+      await waitFor('rogue valid receipt confirms', async () => {
+        const release = rogueCoordinator.getRelease('rel-rogue-receipt');
+        return release.services.checkout?.status === 'accepted' ? release : null;
+      }, 5000, 40);
+      await waitFor('rogue release completes', async () => {
+        const release = rogueCoordinator.getRelease('rel-rogue-receipt');
+        return release.status === 'completed' ? release : null;
+      }, 5000, 40);
+    } finally {
+      rogueCoordinator.close();
+      await new Promise<void>((resolve) => rogue.close(() => resolve()));
+    }
+
+    // Signature binding unit checks on top of the live rogue scenario.
+    const receiptInput = {
+      credential: checkoutReceipt,
+      serviceId: 'checkout',
+      nonce: 'n-1',
+      method: 'POST',
+      pathname: '/__admin/releases/r1/accept',
+      statusCode: 200,
+      body: '{"ok":true}',
+    } as const;
+    const goodReceiptHeaders = signReceiptHeaders(receiptInput);
+    assert.equal(
+      verifyReceiptSignature({
+        headers: goodReceiptHeaders,
+        rawBody: receiptInput.body,
+        statusCode: 200,
+        credential: checkoutReceipt,
+        expected: { serviceId: 'checkout', nonce: 'n-1', method: 'POST', pathname: receiptInput.pathname },
+      }).ok,
+      true,
+    );
+    assert.equal(
+      verifyReceiptSignature({
+        headers: goodReceiptHeaders,
+        rawBody: '{"ok":false}',
+        statusCode: 200,
+        credential: checkoutReceipt,
+        expected: { serviceId: 'checkout', nonce: 'n-1', method: 'POST', pathname: receiptInput.pathname },
+      }).ok,
+      false,
+      '回执正文被篡改必须失败',
+    );
+    assert.equal(
+      verifyReceiptSignature({
+        headers: goodReceiptHeaders,
+        rawBody: receiptInput.body,
+        statusCode: 201,
+        credential: checkoutReceipt,
+        expected: { serviceId: 'checkout', nonce: 'n-1', method: 'POST', pathname: receiptInput.pathname },
+      }).ok,
+      false,
+      'HTTP 状态与签名不一致必须失败',
+    );
+  });
+
+  await check('双向认证·轮换：请求/回执凭证按服务独立轮换，旧凭证停用即拒', async () => {
+    const authStore = cluster!.authStore!;
+    const before = await authStore.read();
+    const oldRiskRequest: Credential = before.services.risk!.request;
+    const oldRiskReceipt: Credential = before.services.risk!.receipt;
+    const paymentsRequestKeyBefore = before.services.payments!.request.keyId;
+    const checkoutReceiptKeyBefore = before.services.checkout!.receipt.keyId;
+
+    // Rotate only the risk REQUEST credential through the coordinator API.
+    const rotateResponse = await cFetch('/api/services/risk/credentials/rotate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ which: 'request' }),
+    });
+    assert.equal(rotateResponse.status, 200, rotateResponse.text);
+    assert.equal(rotateResponse.body.active.requestKeyId !== oldRiskRequest.keyId, true);
+    assert.equal(rotateResponse.body.active.receiptKeyId, oldRiskReceipt.keyId, 'which=request 不得轮换回执凭证');
+
+    const afterRequestRotation = await authStore.read();
+    assert.notEqual(afterRequestRotation.services.risk!.request.keyId, oldRiskRequest.keyId);
+    assert.equal(afterRequestRotation.services.risk!.receipt.keyId, oldRiskReceipt.keyId, '回执凭证应保持不变');
+    assert.equal(afterRequestRotation.services.payments!.request.keyId, paymentsRequestKeyBefore, '其他服务凭证不受影响');
+    assert.equal(afterRequestRotation.services.checkout!.receipt.keyId, checkoutReceiptKeyBefore);
+
+    // Requests still signed with the deactivated request key are rejected.
+    const oldKeyPath = '/__admin/releases/rel-rot-old-request/accept';
+    const oldKeyBody = JSON.stringify({
+      coordinatorAcceptedAt: new Date().toISOString(),
+      acceptedOrder: 999_201,
+      changes: [{ serviceId: 'risk', routeId: 'rules-config', timeoutMs: 4444 }],
+    });
+    const oldKeyHeaders = signRequestHeaders({
+      credential: oldRiskRequest,
+      senderId: authStore.coordinatorId,
+      targetServiceId: 'risk',
+      method: 'POST',
+      pathname: oldKeyPath,
+      body: oldKeyBody,
+      idempotencyKey: 'accept:rel-rot-old-request:risk:v1',
+    });
+    const oldKeyResponse = await fetch(`${serviceUrl('risk')}${oldKeyPath}`, {
+      method: 'POST',
+      body: oldKeyBody,
+      headers: { ...oldKeyHeaders, 'content-type': 'application/json', 'idempotency-key': 'accept:rel-rot-old-request:risk:v1' },
+    });
+    assert.ok([401, 403].includes(oldKeyResponse.status), `旧请求凭证必须被拒，实际 ${oldKeyResponse.status}`);
+    assert.equal((await directFetch('risk', '/__admin/releases/rel-rot-old-request')).status, 404);
+
+    // The coordinator uses the new request key automatically: release completes.
+    await createRelease({
+      releaseId: 'rel-rot-request-ok',
+      changes: [{ serviceId: 'risk', routeId: 'device-fingerprint', timeoutMs: 4321 }],
+    });
+    await waitRelease('rel-rot-request-ok', (r) => r.status === 'completed');
+    await waitConfig('risk', 'device-fingerprint', (c) => c.timeoutMs === 4321);
+
+    // Rotate only the risk RECEIPT credential.
+    const receiptRotation = await cluster!.rotateCredential('risk', 'receipt');
+    assert.notEqual(receiptRotation.after.receipt.keyId, receiptRotation.before.receipt.keyId);
+    assert.equal(receiptRotation.after.request.keyId, receiptRotation.before.request.keyId, '轮换回执不应改动请求凭证');
+    const currentRiskReceipt = (await authStore.read()).services.risk!.receipt;
+
+    const oldReceiptHeaders = signReceiptHeaders({
+      credential: oldRiskReceipt,
+      serviceId: 'risk',
+      nonce: 'n-rot-old',
+      method: 'POST',
+      pathname: '/__admin/releases/x/accept',
+      statusCode: 200,
+      body: '{}',
+    });
+    assert.equal(
+      verifyReceiptSignature({
+        headers: oldReceiptHeaders,
+        rawBody: '{}',
+        statusCode: 200,
+        credential: currentRiskReceipt,
+        expected: { serviceId: 'risk', nonce: 'n-rot-old', method: 'POST', pathname: '/__admin/releases/x/accept' },
+      }).ok,
+      false,
+      '停用的旧回执凭证签署的回执一律拒绝',
+    );
+
+    const newReceiptHeaders = signReceiptHeaders({
+      credential: receiptRotation.after.receipt,
+      serviceId: 'risk',
+      nonce: 'n-rot-new',
+      method: 'POST',
+      pathname: '/__admin/releases/x/accept',
+      statusCode: 200,
+      body: '{}',
+    });
+    assert.equal(
+      verifyReceiptSignature({
+        headers: newReceiptHeaders,
+        rawBody: '{}',
+        statusCode: 200,
+        credential: currentRiskReceipt,
+        expected: { serviceId: 'risk', nonce: 'n-rot-new', method: 'POST', pathname: '/__admin/releases/x/accept' },
+      }).ok,
+      true,
+      '现行回执凭证必须通过',
+    );
+
+    // A valid signature from another service's receipt key is still untrusted
+    // when presented for risk (target-service binding).
+    const checkoutReceipt = (await authStore.read()).services.checkout!.receipt;
+    const foreignReceiptHeaders = signReceiptHeaders({
+      credential: checkoutReceipt,
+      serviceId: 'checkout',
+      nonce: 'n-rot-foreign',
+      method: 'POST',
+      pathname: '/__admin/releases/x/accept',
+      statusCode: 200,
+      body: '{}',
+    });
+    assert.equal(
+      verifyReceiptSignature({
+        headers: foreignReceiptHeaders,
+        rawBody: '{}',
+        statusCode: 200,
+        credential: currentRiskReceipt,
+        expected: { serviceId: 'risk', nonce: 'n-rot-foreign', method: 'POST', pathname: '/__admin/releases/x/accept' },
+      }).ok,
+      false,
+      '其他服务的可信回执不能确认 risk 的动作',
+    );
+
+    // End-to-end confirmation still works with the rotated receipt key.
+    await createRelease({
+      releaseId: 'rel-rot-receipt-ok',
+      changes: [{ serviceId: 'risk', routeId: 'device-fingerprint', timeoutMs: 4322 }],
+    });
+    await waitRelease('rel-rot-receipt-ok', (r) => r.status === 'completed');
+    await waitConfig('risk', 'device-fingerprint', (c) => c.timeoutMs === 4322);
+  });
+
+  await check('双向认证·重启恢复：落盘丢回执且停机轮换后，用现行凭证查询补确认，撤销选择性回退', async () => {
+    // Phase 1: accept is durably applied, receipt lost via chaos response drop.
+    await addChaosRule('payments', {
+      match: { pathIncludes: 'rel-auth-recover' },
+      dropResponse: true,
+    });
+    await createRelease({
+      releaseId: 'rel-auth-recover',
+      changes: [{ serviceId: 'payments', routeId: 'ledger-entries', timeoutMs: 616 }],
+    });
+    await waitFor('payments applied rel-auth-recover', async () => {
+      const response = await directFetch('payments', '/__admin/releases/rel-auth-recover');
+      return response.status === 200 && response.body.status === 'active' ? response.body : null;
+    });
+    await waitRelease(
+      'rel-auth-recover',
+      (r) => r.status === 'running' && (r.services.payments?.attempts ?? 0) >= 1 && r.services.payments.status !== 'accepted',
+    );
+
+    // Coordinator is down; rotate BOTH payments credentials in the meantime.
+    await cluster!.stopCoordinator();
+    const rotation = await cluster!.rotateCredential('payments', 'both');
+    const staleRequestHeaders = signRequestHeaders({
+      credential: rotation.before.request,
+      senderId: cluster!.authStore!.coordinatorId,
+      targetServiceId: 'payments',
+      method: 'GET',
+      pathname: '/__admin/releases/rel-auth-recover',
+      body: '',
+    });
+    const staleRequest = await fetch(
+      `${serviceUrl('payments')}/__admin/releases/rel-auth-recover`,
+      { headers: { ...staleRequestHeaders } },
+    );
+    assert.ok([401, 403].includes(staleRequest.status), '停机轮换后旧请求凭证也必须被服务拒绝');
+
+    // Restart loads current credentials; initial reconcile cannot pass the
+    // chaos drop, then clearing chaos + explicit reconcile recovers via query.
+    await cluster!.startCoordinator();
+    await resetChaos('payments');
+    await cFetch('/api/reconcile', { method: 'POST' });
+    await waitRelease('rel-auth-recover', (r) => r.status === 'completed', 15_000);
+    await waitConfig('payments', 'ledger-entries', (c) => c.timeoutMs === 616);
+
+    // Stack a later release B on the same route; it wins over A.
+    await createRelease({
+      releaseId: 'rel-auth-recover-b',
+      changes: [{ serviceId: 'payments', routeId: 'ledger-entries', timeoutMs: 626 }],
+    });
+    await waitRelease('rel-auth-recover-b', (r) => r.status === 'completed');
+    await waitConfig('payments', 'ledger-entries', (c) => c.timeoutMs === 626);
+
+    // Revoke B, lose the revoke receipt, restart the coordinator again.
+    await addChaosRule('payments', {
+      match: { pathIncludes: 'rel-auth-recover-b' },
+      dropResponse: true,
+    });
+    const revokeResponse = await cFetch('/api/releases/rel-auth-recover-b/revoke', { method: 'POST' });
+    assert.equal(revokeResponse.status, 202, revokeResponse.text);
+    await waitFor('payments B revoked on disk', async () => {
+      const response = await directFetch('payments', '/__admin/releases/rel-auth-recover-b');
+      return response.status === 200 && response.body.status === 'revoked' ? response.body : null;
+    });
+    await waitRelease(
+      'rel-auth-recover-b',
+      (r) => r.status === 'revoking' && (r.revocation?.services.payments?.attempts ?? 0) >= 1,
+    );
+
+    await cluster!.restartCoordinator();
+    await resetChaos('payments');
+    await cFetch('/api/reconcile', { method: 'POST' });
+    await waitRelease('rel-auth-recover-b', (r) => r.status === 'revoked', 15_000);
+    // Selective rollback: removing the later B reveals earlier A=616, not initial.
+    await waitConfig('payments', 'ledger-entries', (c) => c.timeoutMs === 616);
+
+    // Revoke A normally: contribution removed, route returns to its initial 1500.
+    await cFetch('/api/releases/rel-auth-recover/revoke', { method: 'POST' });
+    await waitRelease('rel-auth-recover', (r) => r.status === 'revoked', 15_000);
+    await waitConfig('payments', 'ledger-entries', (c) => c.timeoutMs === 1500);
+  });
+
+  await check('混沌能力保留：按发布 ID 注入延迟仍作用于已认证请求且签名头/回执透传', async () => {
+    const managed = cluster!.getService('risk');
+    managed.proxy.reset();
+    await addChaosRule('risk', {
+      match: { pathIncludes: 'rel-delay-auth' },
+      delayResponseMs: 140,
+      times: 1,
+    });
+
+    const started = Date.now();
+    await createRelease({
+      releaseId: 'rel-delay-auth',
+      changes: [{ serviceId: 'risk', routeId: 'device-fingerprint', timeoutMs: 5151 }],
+    });
+    await waitRelease('rel-delay-auth', (r) => r.status === 'completed', 10_000);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 90, `注入的 140ms 应答延迟应可观测，实际完成耗时 ${elapsed}ms`);
+    await waitConfig('risk', 'device-fingerprint', (c) => c.timeoutMs === 5151);
+
+    const acceptRecord = managed.proxy.requests.find(
+      (record) => record.method === 'POST' && record.path.includes('/releases/rel-delay-auth/accept'),
+    );
+    assert.ok(acceptRecord, '混沌代理应记录该发布的 accept 请求');
+    assert.equal(acceptRecord?.targetStatus, 200, '延迟后应把已签名回执透传回协调器');
+    assert.ok((acceptRecord?.durationMs ?? 0) >= 100, `代理记录时长应包含注入延迟，实际 ${acceptRecord?.durationMs}ms`);
+  });
+
   clearTimeout(hardTimer);
   await cluster.stop();
 
@@ -642,7 +1319,7 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
-  console.log('全部自检通过：发布、暂停、并发优先级、原子性、持久化、重启对账和夹具控制均正常。');
+  console.log('全部自检通过：发布、暂停、分批闸门、并发优先级、原子性、持久化、重启对账、双向认证（错投拒绝/可信回执/独立轮换/重启恢复）和夹具混沌控制均正常。');
   process.exit(0);
 }
 

@@ -4,6 +4,7 @@ import { Coordinator } from './coordinator.js';
 import { createCoordinatorServer } from './server.js';
 import { numberArg, parseCliArgs, requireStringArg } from '../shared/http.js';
 import { ConfigService } from '../service/config-service.js';
+import { AuthFileStore } from '../shared/credentials.js';
 import type { ClusterConfig } from '../shared/types.js';
 
 async function main(): Promise<void> {
@@ -19,12 +20,20 @@ async function main(): Promise<void> {
   }
 
   const fixture = await ConfigService.loadFixture(fixturePath);
+  const credentialsPath = clusterConfig?.credentialsPath
+    ? path.resolve(clusterConfig.credentialsPath)
+    : path.join(dataDir, 'credentials.json');
+  const auth = new AuthFileStore(credentialsPath);
+  await auth.init((clusterConfig?.services ?? []).map((service) => service.id));
+
   const coordinator = new Coordinator({
     dataDir,
     fixture,
     endpoints: clusterConfig?.services ?? [],
     requestTimeoutMs: clusterConfig?.requestTimeoutMs ?? 1200,
     reconcileIntervalMs: clusterConfig?.reconcileIntervalMs ?? 700,
+    credentialsPath,
+    auth,
   });
   await coordinator.start();
   coordinator.startPeriodicReconcile(clusterConfig?.reconcileIntervalMs ?? 700);

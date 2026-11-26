@@ -173,6 +173,7 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
             'POST /api/releases/:id/revoke',
             'POST /api/releases/:id/reconcile',
             'POST /api/reconcile',
+            'POST /api/services/:serviceId/credentials/rotate',
             'GET /api/dashboard',
             'GET /api/services/:serviceId/actual-config',
           ],
@@ -241,6 +242,37 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
       if (req.method === 'POST' && url.pathname === '/api/reconcile') {
         await coordinator.reconcileAll();
         sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (
+        req.method === 'POST' &&
+        segments[0] === 'api' &&
+        segments[1] === 'services' &&
+        segments[2] &&
+        segments[3] === 'credentials' &&
+        segments[4] === 'rotate'
+      ) {
+        const serviceId = decodeURIComponent(segments[2]);
+        const body = (await readJsonBody(req).catch(() => ({}))) as { which?: unknown };
+        const which =
+          body.which === 'request' || body.which === 'receipt' || body.which === 'both'
+            ? body.which
+            : 'both';
+        const result = await coordinator.rotateServiceCredentials(serviceId, which);
+        sendJson(res, 200, {
+          ok: true,
+          serviceId: result.serviceId,
+          which: result.which,
+          active: {
+            requestKeyId: result.after.request.keyId,
+            receiptKeyId: result.after.receipt.keyId,
+          },
+          deactivated: {
+            requestKeyId: result.before.request.keyId === result.after.request.keyId ? undefined : result.before.request.keyId,
+            receiptKeyId: result.before.receipt.keyId === result.after.receipt.keyId ? undefined : result.before.receipt.keyId,
+          },
+        });
         return;
       }
 

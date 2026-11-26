@@ -4,6 +4,17 @@ import { AtomicJsonStore, delay, nowIso } from '../shared/store.js';
 import { fetchJson } from '../shared/http.js';
 import { ApiError } from '../shared/errors.js';
 import {
+  signRequestHeaders,
+  verifyReceiptSignature,
+} from '../shared/auth.js';
+import {
+  AuthFileStore,
+  InMemoryAuthProvider,
+  type AuthProvider,
+  type RotationResult,
+  type RotateWhich,
+} from '../shared/credentials.js';
+import {
   deriveTargetServiceIds,
   normalizeBatches,
   normalizeChanges,
@@ -24,6 +35,10 @@ export interface CoordinatorOptions {
   requestTimeoutMs?: number;
   retryDelayMs?: number;
   reconcileIntervalMs?: number;
+  /** Durable credential file shared with spawned service processes. */
+  credentialsPath?: string;
+  /** Explicit auth provider; when omitted a file/in-memory provider is built. */
+  auth?: AuthProvider;
 }
 
 export interface CreateReleaseInput {
@@ -34,8 +49,16 @@ export interface CreateReleaseInput {
   batchSize?: unknown;
 }
 
+interface ReceiptContext {
+  serviceId: string;
+  nonce: string;
+  method: string;
+  pathname: string;
+}
+
 export class Coordinator {
   readonly store: AtomicJsonStore<CoordinatorPersistentState>;
+  readonly auth: AuthProvider;
   private readonly endpoints = new Map<string, ServiceEndpoint>();
   private readonly loops = new Map<string, Promise<void>>();
   private reconcileTimer: NodeJS.Timeout | undefined;
@@ -49,6 +72,13 @@ export class Coordinator {
     for (const endpoint of options.endpoints) this.endpoints.set(endpoint.id, endpoint);
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1200;
     this.retryDelayMs = options.retryDelayMs ?? 180;
+    if (options.auth) {
+      this.auth = options.auth;
+    } else if (options.credentialsPath) {
+      this.auth = new AuthFileStore(options.credentialsPath);
+    } else {
+      this.auth = new InMemoryAuthProvider([...this.endpoints.keys()]);
+    }
   }
 
   async start(): Promise<void> {
@@ -93,6 +123,68 @@ export class Coordinator {
     const endpoint = this.endpoints.get(serviceId);
     if (!endpoint) throw new ApiError(500, `no endpoint configured for service ${serviceId}`);
     return endpoint;
+  }
+
+  /**
+   * Builds the mutually-authenticated headers for one outbound request.
+   * A fresh nonce is generated per attempt so receipts can be bound to it.
+   */
+  private async signServiceRequest(
+    serviceId: string,
+    params: { method: string; pathname: string; body?: string; idempotencyKey?: string; nonce?: string },
+  ): Promise<{ nonce: string; headers: Record<string, string> }> {
+    const credential = await this.auth.requestCredential(serviceId);
+    const nonce = params.nonce ?? randomUUID();
+    const headers = signRequestHeaders({
+      credential,
+      senderId: this.auth.coordinatorId,
+      targetServiceId: serviceId,
+      method: params.method,
+      pathname: params.pathname,
+      body: params.body ?? '',
+      nonce,
+      idempotencyKey: params.idempotencyKey,
+    });
+    return { nonce, headers: { ...headers } };
+  }
+
+  /**
+   * The coordinator only trusts a response if it carries a valid receipt
+   * signature from the target service's active receipt credential and the
+   * receipt binds this exact request (nonce/method/path) and observed status.
+   */
+  private async verifyServiceReceipt(
+    response: { status: number; text: string; headers: Record<string, string> },
+    context: ReceiptContext,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const credential = await this.auth.receiptCredential(context.serviceId);
+      return verifyReceiptSignature({
+        headers: response.headers,
+        rawBody: response.text,
+        statusCode: response.status,
+        credential,
+        expected: {
+          serviceId: context.serviceId,
+          nonce: context.nonce,
+          method: context.method,
+          pathname: context.pathname,
+        },
+      });
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  }
+
+  /** Rotates a per-service request and/or receipt credential. */
+  async rotateServiceCredentials(serviceId: string, which: RotateWhich): Promise<RotationResult> {
+    if (!this.endpoints.has(serviceId)) {
+      throw new ApiError(404, `unknown service: ${serviceId}`);
+    }
+    if (which !== 'request' && which !== 'receipt' && which !== 'both') {
+      throw new ApiError(400, "which must be 'request', 'receipt' or 'both'");
+    }
+    return this.auth.rotate(serviceId, which);
   }
 
   private changesForService(release: ReleaseRecord, serviceId: string) {
@@ -340,6 +432,7 @@ export class Coordinator {
       acceptedOrder: before.acceptedOrder,
       changes,
     });
+    const pathname = `/__admin/releases/${encodeURIComponent(id)}/accept`;
 
     await this.store.mutate((draft) => {
       const serviceState = draft.releases[id]?.services[serviceId];
@@ -352,19 +445,34 @@ export class Coordinator {
       return { next: draft, result: undefined };
     });
 
+    let nonce = '';
     try {
-      const response = await fetchJson(
-        `${baseUrl}/__admin/releases/${encodeURIComponent(id)}/accept`,
-        {
-          method: 'POST',
-          body,
-          timeoutMs: this.requestTimeoutMs,
-          headers: {
-            'content-type': 'application/json',
-            'idempotency-key': dispatch.idempotencyKey,
-          },
+      const signed = await this.signServiceRequest(serviceId, {
+        method: 'POST',
+        pathname,
+        body,
+        idempotencyKey: dispatch.idempotencyKey,
+      });
+      nonce = signed.nonce;
+      const response = await fetchJson(`${baseUrl}${pathname}`, {
+        method: 'POST',
+        body,
+        timeoutMs: this.requestTimeoutMs,
+        headers: {
+          ...signed.headers,
+          'content-type': 'application/json',
+          'idempotency-key': dispatch.idempotencyKey,
         },
-      );
+      });
+      const receipt = await this.verifyServiceReceipt(response, {
+        serviceId,
+        nonce,
+        method: 'POST',
+        pathname,
+      });
+      if (!receipt.ok) {
+        throw new Error(`refusing untrusted accept receipt: ${receipt.error}`);
+      }
       if (response.status === 200 && response.body?.status === 'active') {
         await this.markAccepted(id, serviceId, response.body.serviceAcceptedAt);
         return;
@@ -401,11 +509,30 @@ export class Coordinator {
 
   async reconcileServiceAccept(id: string, serviceId: string): Promise<boolean> {
     const endpoint = this.endpoint(serviceId);
+    const pathname = `/__admin/releases/${encodeURIComponent(id)}`;
+    let nonce: string;
+    let headers: Record<string, string>;
     try {
-      const response = await fetchJson(
-        `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}`,
-        { method: 'GET', timeoutMs: this.requestTimeoutMs },
-      );
+      const signed = await this.signServiceRequest(serviceId, { method: 'GET', pathname });
+      nonce = signed.nonce;
+      headers = signed.headers;
+    } catch {
+      return false;
+    }
+    try {
+      const response = await fetchJson(`${endpoint.baseUrl}${pathname}`, {
+        method: 'GET',
+        timeoutMs: this.requestTimeoutMs,
+        headers,
+      });
+      // Never confirm from an unsigned/forged/mismatched query result.
+      const receipt = await this.verifyServiceReceipt(response, {
+        serviceId,
+        nonce,
+        method: 'GET',
+        pathname,
+      });
+      if (!receipt.ok) return false;
       if (response.status === 200 && response.body?.status === 'active') {
         await this.markAccepted(id, serviceId, response.body.serviceAcceptedAt);
         return true;
@@ -468,6 +595,8 @@ export class Coordinator {
     const dispatch = before?.revocation?.services[serviceId];
     if (!before || !dispatch || dispatch.status === 'revoked') return;
     const baseUrl = this.endpoint(serviceId).baseUrl;
+    const pathname = `/__admin/releases/${encodeURIComponent(id)}/revoke`;
+    const body = '{}';
 
     await this.store.mutate((draft) => {
       const state = draft.releases[id]?.revocation?.services[serviceId];
@@ -479,19 +608,34 @@ export class Coordinator {
       return { next: draft, result: undefined };
     });
 
+    let nonce = '';
     try {
-      const response = await fetchJson(
-        `${baseUrl}/__admin/releases/${encodeURIComponent(id)}/revoke`,
-        {
-          method: 'POST',
-          body: '{}',
-          timeoutMs: this.requestTimeoutMs,
-          headers: {
-            'content-type': 'application/json',
-            'idempotency-key': dispatch.idempotencyKey,
-          },
+      const signed = await this.signServiceRequest(serviceId, {
+        method: 'POST',
+        pathname,
+        body,
+        idempotencyKey: dispatch.idempotencyKey,
+      });
+      nonce = signed.nonce;
+      const response = await fetchJson(`${baseUrl}${pathname}`, {
+        method: 'POST',
+        body,
+        timeoutMs: this.requestTimeoutMs,
+        headers: {
+          ...signed.headers,
+          'content-type': 'application/json',
+          'idempotency-key': dispatch.idempotencyKey,
         },
-      );
+      });
+      const receipt = await this.verifyServiceReceipt(response, {
+        serviceId,
+        nonce,
+        method: 'POST',
+        pathname,
+      });
+      if (!receipt.ok) {
+        throw new Error(`refusing untrusted revoke receipt: ${receipt.error}`);
+      }
       if (response.status === 200 && (response.body?.status === 'revoked' || response.body?.status === 'absent')) {
         await this.markRevokeConfirmed(id, serviceId, response.body.serviceRevokedAt);
         return;
@@ -511,11 +655,31 @@ export class Coordinator {
 
   private async reconcileServiceRevoke(id: string, serviceId: string): Promise<boolean> {
     const endpoint = this.endpoint(serviceId);
+    const pathname = `/__admin/releases/${encodeURIComponent(id)}`;
+    let nonce: string;
+    let headers: Record<string, string>;
     try {
-      const response = await fetchJson(
-        `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}`,
-        { method: 'GET', timeoutMs: this.requestTimeoutMs },
-      );
+      const signed = await this.signServiceRequest(serviceId, { method: 'GET', pathname });
+      nonce = signed.nonce;
+      headers = signed.headers;
+    } catch {
+      return false;
+    }
+    try {
+      const response = await fetchJson(`${endpoint.baseUrl}${pathname}`, {
+        method: 'GET',
+        timeoutMs: this.requestTimeoutMs,
+        headers,
+      });
+      // A 404 "absent" only confirms revocation when it is itself signed by
+      // the target service; otherwise an attacker could forge absence.
+      const receipt = await this.verifyServiceReceipt(response, {
+        serviceId,
+        nonce,
+        method: 'GET',
+        pathname,
+      });
+      if (!receipt.ok) return false;
       if (response.status === 404) {
         await this.markRevokeConfirmed(id, serviceId);
         return true;

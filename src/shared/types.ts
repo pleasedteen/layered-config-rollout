@@ -167,5 +167,7 @@ export interface ClusterConfig {
   fixturePath: string;
   requestTimeoutMs?: number;
   reconcileIntervalMs?: number;
+  /** Path to the durable per-service mutual-auth credential file. */
+  credentialsPath?: string;
   services: ServiceEndpoint[];
 }

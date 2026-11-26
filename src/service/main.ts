@@ -2,6 +2,7 @@ import path from 'node:path';
 import { ConfigService } from './config-service.js';
 import { createForwardServiceServer } from './server.js';
 import { numberArg, parseCliArgs, requireStringArg } from '../shared/http.js';
+import { AuthFileStore } from '../shared/credentials.js';
 
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
@@ -10,13 +11,23 @@ async function main(): Promise<void> {
   const fixturePath = requireStringArg(args, 'fixture');
   const port = numberArg(args, 'port', 0);
 
+  const resolvedDataDir = path.resolve(dataDir);
+  const credentialsPath =
+    typeof args.credentials === 'string' && args.credentials.length > 0
+      ? path.resolve(args.credentials)
+      : path.join(resolvedDataDir, 'credentials.json');
+  const auth = new AuthFileStore(credentialsPath);
+  // Creates a single-service credential file if a cluster-managed one was not
+  // supplied; the fixture cluster always provisions the shared file first.
+  await auth.init([serviceId]);
+
   const fixture = await ConfigService.loadFixture(path.resolve(fixturePath));
   const configService = await ConfigService.start({
     serviceId,
-    dataDir: path.resolve(dataDir),
+    dataDir: resolvedDataDir,
     fixture,
   });
-  const server = createForwardServiceServer(configService);
+  const server = createForwardServiceServer(configService, auth);
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

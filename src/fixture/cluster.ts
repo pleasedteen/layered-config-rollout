@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ChaosProxy } from '../chaos/proxy.js';
 import { waitForHttpHealth } from '../shared/http.js';
 import { ConfigService } from '../service/config-service.js';
+import { AuthFileStore, type RotationResult, type RotateWhich } from '../shared/credentials.js';
 import type { ClusterConfig, FixtureData, ServiceEndpoint } from '../shared/types.js';
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -77,6 +78,7 @@ export class FixtureCluster {
   coordinatorLogs: string[] = [];
   coordinatorIntentionalStop = false;
   clusterConfigPath: string | undefined;
+  authStore: AuthFileStore | undefined;
 
   private constructor(options: FixtureClusterOptions, fixture: FixtureData, dataDir: string) {
     this.fixturePath = options.fixturePath;
@@ -91,6 +93,9 @@ export class FixtureCluster {
     const dataDir = options.dataDir ?? (await mkdtemp(path.join(tmpdir(), 'route-fixture-')));
     await mkdir(dataDir, { recursive: true });
     const cluster = new FixtureCluster(options, fixture, dataDir);
+
+    cluster.authStore = new AuthFileStore(path.join(dataDir, 'credentials.json'));
+    await cluster.authStore.init(fixture.services.map((service) => service.id));
 
     for (const definition of fixture.services) {
       const fixed = options.servicePorts?.[definition.id];
@@ -143,10 +148,16 @@ export class FixtureCluster {
       fixturePath: this.fixturePath,
       requestTimeoutMs: this.requestTimeoutMs,
       reconcileIntervalMs: this.reconcileIntervalMs,
+      credentialsPath: this.authStore?.filePath ?? path.join(this.dataDir, 'credentials.json'),
       services: this.endpoints(),
     };
     this.clusterConfigPath = path.join(this.dataDir, 'cluster-config.json');
     await writeFile(this.clusterConfigPath, JSON.stringify(config, null, 2), 'utf8');
+  }
+
+  async rotateCredential(serviceId: string, which: RotateWhich = 'both'): Promise<RotationResult> {
+    if (!this.authStore) throw new Error('credential store was not initialized');
+    return this.authStore.rotate(serviceId, which);
   }
 
   serviceMainPath(): string {
@@ -178,6 +189,7 @@ export class FixtureCluster {
         `--port=${managed.directPort}`,
         `--data-dir=${this.dataDir}`,
         `--fixture=${this.fixturePath}`,
+        `--credentials=${this.authStore?.filePath ?? path.join(this.dataDir, 'credentials.json')}`,
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
