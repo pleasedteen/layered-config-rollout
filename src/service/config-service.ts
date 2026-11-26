@@ -9,10 +9,12 @@ import type {
   Candidate,
   ConfigKey,
   FixtureData,
+  PendingChunkAccept,
   RouteChange,
   RouteConfig,
   ServiceDefinition,
   ServicePersistentState,
+  ServiceReleaseRecord,
 } from '../shared/types.js';
 import { readFile } from 'node:fs/promises';
 
@@ -20,6 +22,36 @@ export interface ServiceHttpResult {
   statusCode: number;
   body: unknown;
   replayed?: boolean;
+}
+
+/**
+ * A service's durable view of one release, used both by operators and by
+ * coordinator reconciliation. `pending` means some chunks are persisted but
+ * the group has not been applied yet; the route configuration still reflects
+ * the previous state.
+ */
+export interface ReleaseChunkStatus {
+  status: 'active' | 'revoked' | 'pending' | 'absent';
+  releaseId: string;
+  chunkCount: number | null;
+  receivedChunks: number[];
+  missingChunks: number[];
+  changesApplied: boolean;
+  serviceAcceptedAt?: string;
+  serviceRevokedAt?: string;
+}
+
+interface ParsedChunk {
+  index: number;
+  count: number;
+}
+
+interface ParsedAccept {
+  releaseId: string;
+  coordinatorAcceptedAt: string;
+  acceptedOrder: number;
+  changes: RouteChange[];
+  chunk?: ParsedChunk;
 }
 
 function initialState(service: ServiceDefinition): ServicePersistentState {
@@ -39,6 +71,7 @@ function initialState(service: ServiceDefinition): ServicePersistentState {
     candidates,
     releases: {},
     processedRequests: {},
+    pendingChunks: {},
   };
 }
 
@@ -47,6 +80,20 @@ function compareCandidateNewestFirst(a: Candidate, b: Candidate): number {
   const time = Date.parse(b.coordinatorAcceptedAt) - Date.parse(a.coordinatorAcceptedAt);
   if (time !== 0) return time;
   return b.releaseId.localeCompare(a.releaseId);
+}
+
+function missingIndexes(count: number, received: number[]): number[] {
+  const missing: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (!received.includes(index)) missing.push(index);
+  }
+  return missing;
+}
+
+function addReceived(received: number[], index: number): number[] {
+  const next = received.includes(index) ? [...received] : [...received, index];
+  next.sort((a, b) => a - b);
+  return next;
 }
 
 export class ConfigService {
@@ -66,6 +113,7 @@ export class ConfigService {
     const file = path.join(options.dataDir, 'services', `${options.serviceId}.json`);
     const store = new AtomicJsonStore<ServicePersistentState>(file);
     await store.initialize(() => initialState(definition));
+    if (!store.get().pendingChunks) store.get().pendingChunks = {};
     return new ConfigService(definition, store);
   }
 
@@ -104,14 +152,53 @@ export class ConfigService {
     return this.store.get().releases[releaseId] ?? null;
   }
 
-  private validateAcceptInput(raw: any): {
-    coordinatorAcceptedAt: string;
-    acceptedOrder: number;
-    changes: RouteChange[];
-  } {
-    if (!raw || typeof raw !== 'object') throw new Error('request body must be an object');
-    if (typeof raw.releaseId !== 'string' || raw.releaseId.length === 0) {
-      throw new Error('releaseId is required in body');
+  /**
+   * Reports applied and buffered state of one release. Buffered chunks are
+   * persisted per chunk, so after a crash the service can still report
+   * exactly which chunk indexes it already has.
+   */
+  getReleaseStatus(releaseId: string): ReleaseChunkStatus {
+    const state = this.store.get();
+    const release = state.releases[releaseId];
+    if (release) {
+      const chunkCount = release.chunkCount ?? 1;
+      const all = Array.from({ length: chunkCount }, (_, index) => index);
+      return {
+        status: release.status,
+        releaseId,
+        chunkCount,
+        receivedChunks: all,
+        missingChunks: [],
+        changesApplied: release.status === 'active',
+        serviceAcceptedAt: release.serviceAcceptedAt,
+        serviceRevokedAt: release.serviceRevokedAt,
+      };
+    }
+    const pending = state.pendingChunks?.[releaseId];
+    if (pending) {
+      return {
+        status: 'pending',
+        releaseId,
+        chunkCount: pending.chunkCount,
+        receivedChunks: [...pending.received],
+        missingChunks: missingIndexes(pending.chunkCount, pending.received),
+        changesApplied: false,
+      };
+    }
+    return {
+      status: 'absent',
+      releaseId,
+      chunkCount: null,
+      receivedChunks: [],
+      missingChunks: [],
+      changesApplied: false,
+    };
+  }
+
+  private parseAcceptInput(releaseId: string, raw: any): ParsedAccept {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('request body must be an object');
+    if (raw.releaseId !== undefined && raw.releaseId !== releaseId) {
+      throw new Error(`body releaseId ${raw.releaseId} does not match request path ${releaseId}`);
     }
     if (typeof raw.coordinatorAcceptedAt !== 'string' || Number.isNaN(Date.parse(raw.coordinatorAcceptedAt))) {
       throw new Error('coordinatorAcceptedAt must be an ISO timestamp');
@@ -122,6 +209,17 @@ export class ConfigService {
     }
     if (!Array.isArray(raw.changes) || raw.changes.length === 0) {
       throw new Error('changes must be a non-empty array containing only this service changes');
+    }
+
+    let chunk: ParsedChunk | undefined;
+    if (raw.chunk !== undefined) {
+      if (!raw.chunk || typeof raw.chunk !== 'object') throw new Error('chunk must be an object');
+      const index = Number(raw.chunk.index);
+      const count = Number(raw.chunk.count);
+      if (!Number.isInteger(index) || index < 0) throw new Error('chunk.index must be a non-negative integer');
+      if (!Number.isInteger(count) || count < 1) throw new Error('chunk.count must be a positive integer');
+      if (index >= count) throw new Error('chunk.index must be smaller than chunk.count');
+      chunk = { index, count };
     }
 
     const changes: RouteChange[] = [];
@@ -149,19 +247,83 @@ export class ConfigService {
       if (!hasValue) throw new Error(`change for ${key} has no configuration value`);
       changes.push(change);
     }
-    return { coordinatorAcceptedAt: raw.coordinatorAcceptedAt, acceptedOrder, changes };
+    return { releaseId, coordinatorAcceptedAt: raw.coordinatorAcceptedAt, acceptedOrder, changes, chunk };
+  }
+
+  /**
+   * Applies one release group to candidates and effective config in a single
+   * atomic mutation. Callers guarantee `changes` are already validated.
+   */
+  private applyReleaseGroup(
+    draft: ServicePersistentState,
+    input: ParsedAccept,
+    changes: RouteChange[],
+    acceptedAt: string,
+    chunkCount?: number,
+  ): Record<string, unknown> {
+    for (const change of changes) {
+      const routeState = draft.routes[change.routeId];
+      if (!routeState) throw new Error(`unknown route state: ${change.routeId}`);
+      const candidateMap = (draft.candidates[change.routeId] ??= {});
+
+      for (const configKey of CONFIG_KEYS) {
+        const value = change[configKey];
+        if (value === undefined) continue;
+        const typedKey = configKey as ConfigKey;
+        const list = (candidateMap[typedKey] ??= []);
+        const filtered = list.filter((candidate) => candidate.releaseId !== input.releaseId);
+        filtered.push({
+          releaseId: input.releaseId,
+          coordinatorAcceptedAt: input.coordinatorAcceptedAt,
+          acceptedOrder: input.acceptedOrder,
+          value,
+        });
+        filtered.sort(compareCandidateNewestFirst);
+        candidateMap[typedKey] = filtered;
+        const winner = filtered[0];
+        if (winner) routeState.effective[typedKey] = winner.value;
+      }
+    }
+
+    const record: ServiceReleaseRecord = {
+      releaseId: input.releaseId,
+      coordinatorAcceptedAt: input.coordinatorAcceptedAt,
+      acceptedOrder: input.acceptedOrder,
+      status: 'active',
+      changes: changes.map((change) => ({ ...change })),
+      serviceAcceptedAt: acceptedAt,
+    };
+    if (chunkCount !== undefined) record.chunkCount = chunkCount;
+    draft.releases[input.releaseId] = record;
+
+    return {
+      ok: true,
+      serviceId: this.definition.id,
+      releaseId: input.releaseId,
+      status: 'active',
+      serviceAcceptedAt: acceptedAt,
+      chunkCount: chunkCount ?? 1,
+      appliedRouteIds: changes.map((change) => change.routeId),
+      effective: Object.fromEntries(
+        changes.map((change) => [change.routeId, { ...draft.routes[change.routeId]!.effective }]),
+      ),
+    };
   }
 
   async acceptRelease(releaseId: string, rawBody: any, idempotencyKey?: string): Promise<ServiceHttpResult> {
-    let input: ReturnType<ConfigService['validateAcceptInput']>;
+    let input: ParsedAccept;
     try {
-      input = this.validateAcceptInput({ ...(rawBody ?? {}), releaseId });
+      input = this.parseAcceptInput(releaseId, { ...(rawBody ?? {}), releaseId });
     } catch (error) {
       return { statusCode: 400, body: { ok: false, error: (error as Error).message } };
     }
 
-    const key = idempotencyKey || `accept:${releaseId}`;
+    const key =
+      idempotencyKey ||
+      (input.chunk ? `accept:${releaseId}:chunk${input.chunk.index}` : `accept:${releaseId}`);
+
     return this.store.mutate<ServiceHttpResult>((draft) => {
+      draft.pendingChunks ??= {};
       const storedRequest = draft.processedRequests[key];
       if (storedRequest) {
         return {
@@ -186,57 +348,107 @@ export class ConfigService {
 
       const acceptedAt = existing?.serviceAcceptedAt ?? nowIso();
 
-      for (const change of input.changes) {
-        const routeState = draft.routes[change.routeId];
-        if (!routeState) throw new Error(`unknown route state: ${change.routeId}`);
-        const candidateMap = (draft.candidates[change.routeId] ??= {});
-
-        for (const configKey of CONFIG_KEYS) {
-          const value = change[configKey];
-          if (value === undefined) continue;
-          const key2 = configKey as ConfigKey;
-          const list = (candidateMap[key2] ??= []);
-          const filtered = list.filter((candidate) => candidate.releaseId !== releaseId);
-          filtered.push({
-            releaseId,
-            coordinatorAcceptedAt: input.coordinatorAcceptedAt,
-            acceptedOrder: input.acceptedOrder,
-            value,
-          });
-          filtered.sort(compareCandidateNewestFirst);
-          candidateMap[key2] = filtered;
-          const winner = filtered[0];
-          if (winner) routeState.effective[key2] = winner.value;
-        }
+      if (!input.chunk) {
+        const body = this.applyReleaseGroup(draft, input, input.changes, acceptedAt);
+        draft.processedRequests[key] = {
+          idempotencyKey: key,
+          statusCode: 200,
+          responseJson: body,
+          completedAt: nowIso(),
+        };
+        return { next: draft, result: { statusCode: 200, body } };
       }
 
-      draft.releases[releaseId] = {
-        releaseId,
-        coordinatorAcceptedAt: input.coordinatorAcceptedAt,
-        acceptedOrder: input.acceptedOrder,
-        status: 'active',
-        changes: input.changes,
-        serviceAcceptedAt: acceptedAt,
-      };
+      const chunk = input.chunk;
+      let pending: PendingChunkAccept | undefined = draft.pendingChunks[releaseId];
+      if (
+        pending &&
+        (pending.chunkCount !== chunk.count ||
+          pending.coordinatorAcceptedAt !== input.coordinatorAcceptedAt ||
+          pending.acceptedOrder !== input.acceptedOrder)
+      ) {
+        const body = {
+          ok: false,
+          error: `release ${releaseId} already has buffered chunks from a different dispatch plan`,
+          releaseId,
+          status: 'pending',
+          chunkCount: pending.chunkCount,
+        };
+        return { result: { statusCode: 409, body } };
+      }
+      if (!pending) {
+        const timestamp = nowIso();
+        pending = {
+          releaseId,
+          coordinatorAcceptedAt: input.coordinatorAcceptedAt,
+          acceptedOrder: input.acceptedOrder,
+          chunkCount: chunk.count,
+          changesByChunk: {},
+          received: [],
+          firstReceivedAt: timestamp,
+          updatedAt: timestamp,
+        };
+        draft.pendingChunks[releaseId] = pending;
+      }
 
-      const body = {
-        ok: true,
-        serviceId: this.definition.id,
-        releaseId,
-        status: 'active',
-        serviceAcceptedAt: acceptedAt,
-        appliedRouteIds: input.changes.map((change) => change.routeId),
-        effective: Object.fromEntries(
-          input.changes.map((change) => [change.routeId, { ...draft.routes[change.routeId]!.effective }]),
-        ),
-      };
+      pending.changesByChunk[String(chunk.index)] = input.changes.map((change) => ({ ...change }));
+      pending.received = addReceived(pending.received, chunk.index);
+      pending.updatedAt = nowIso();
+
+      const missing = missingIndexes(pending.chunkCount, pending.received);
+      if (missing.length > 0) {
+        const body = {
+          ok: true,
+          serviceId: this.definition.id,
+          releaseId,
+          status: 'pending',
+          chunkCount: pending.chunkCount,
+          chunks: { index: chunk.index, count: pending.chunkCount },
+          receivedChunks: [...pending.received],
+          missingChunks: missing,
+        };
+        draft.processedRequests[key] = {
+          idempotencyKey: key,
+          statusCode: 202,
+          responseJson: body,
+          completedAt: nowIso(),
+        };
+        return { next: draft, result: { statusCode: 202, body } };
+      }
+
+      // The group is complete: merge every buffered chunk and apply it as one
+      // atomic change set, then drop the buffer.
+      const merged: RouteChange[] = [];
+      const seen = new Set<string>();
+      let duplicate: string | undefined;
+      for (let index = 0; index < pending.chunkCount; index += 1) {
+        for (const change of pending.changesByChunk[String(index)] ?? []) {
+          const routeKey = `${change.serviceId}/${change.routeId}`;
+          if (seen.has(routeKey)) duplicate = routeKey;
+          seen.add(routeKey);
+          merged.push(change);
+        }
+      }
+      delete draft.pendingChunks[releaseId];
+
+      if (duplicate) {
+        const body = {
+          ok: false,
+          error: `buffered chunk group repeats ${duplicate}; the whole group was not applied`,
+          releaseId,
+          status: 'absent',
+        };
+        return { next: draft, result: { statusCode: 400, body } };
+      }
+
+      const body = this.applyReleaseGroup(draft, input, merged, acceptedAt, pending.chunkCount);
+      body.chunks = { index: chunk.index, count: pending.chunkCount };
       draft.processedRequests[key] = {
         idempotencyKey: key,
         statusCode: 200,
         responseJson: body,
         completedAt: nowIso(),
       };
-
       return { next: draft, result: { statusCode: 200, body } };
     });
   }
@@ -244,6 +456,7 @@ export class ConfigService {
   async revokeRelease(releaseId: string, idempotencyKey?: string): Promise<ServiceHttpResult> {
     const key = idempotencyKey || `revoke:${releaseId}`;
     return this.store.mutate<ServiceHttpResult>((draft) => {
+      draft.pendingChunks ??= {};
       const storedRequest = draft.processedRequests[key];
       if (storedRequest) {
         return {
@@ -252,8 +465,13 @@ export class ConfigService {
             body: storedRequest.responseJson,
             replayed: true,
           } satisfies ServiceHttpResult,
-        };
+          };
       }
+
+      // Chunks that were buffered but never completed are simply discarded:
+      // they never affected candidates or effective config.
+      const buffered = draft.pendingChunks[releaseId];
+      if (buffered) delete draft.pendingChunks[releaseId];
 
       const existing = draft.releases[releaseId];
       const revokedAt = existing?.serviceRevokedAt ?? nowIso();
@@ -288,6 +506,7 @@ export class ConfigService {
         releaseId,
         status,
         serviceRevokedAt: revokedAt,
+        discardedBufferedChunks: buffered ? buffered.received.length : 0,
       };
       draft.processedRequests[key] = {
         idempotencyKey: key,

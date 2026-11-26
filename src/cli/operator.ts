@@ -27,11 +27,16 @@ function printReleaseSummary(release: any): void {
   console.log(`  acceptedAt: ${release.coordinatorAcceptedAt}`);
   if (release.progress) {
     console.log(`  rollout: ${release.progress.confirmedBatches}/${release.progress.totalBatches} batches confirmed`);
+    if (release.dispatchMaxBytes) console.log(`  max dispatch body: ${release.dispatchMaxBytes} bytes`);
     for (const batch of release.progress.batches) {
       const states = batch.services
-        .map((service: any) => `${service.serviceId}=${service.status}${service.attempts ? `(${service.attempts})` : ''}${service.lastError ? ` err=${service.lastError}` : ''}`)
+        .map((service: any) => {
+          const chunks = service.chunks ? ` [chunks ${service.chunks.confirmed}/${service.chunks.total}, max ${service.chunks.maxBytes}B]` : '';
+          const err = service.lastError ? ` err=${service.lastError}` : '';
+          return `${service.serviceId}=${service.status}${chunks}${service.attempts ? `(${service.attempts})` : ''}${err}`;
+        })
         .join(', ');
-      console.log(`    batch ${batch.index} [${batch.serviceIds.join(', ')}]: ${batch.confirmed ? 'CONFIRMED' : states}`);
+      console.log(`    batch ${batch.index} [${batch.serviceIds.join(', ')}]: ${batch.confirmed ? 'CONFIRMED' : ''} ${states}`.trimEnd());
     }
   }
   if (release.revocationProgress) {

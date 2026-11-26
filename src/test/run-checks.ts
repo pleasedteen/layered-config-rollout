@@ -145,10 +145,71 @@ async function resetChaos(serviceId: string): Promise<void> {
   assert.equal(response.status, 200, response.text);
 }
 
+/** Drops fault-injection rules but keeps the request log, so size/chunk
+ * assertions still see every dispatch that ever happened. */
+function clearChaosRules(serviceId: string): void {
+  cluster!.getService(serviceId).proxy.rules = [];
+}
+
 function acceptRecords(serviceId: string, releaseId: string) {
   return cluster!
     .getService(serviceId)
     .proxy.requests.filter((record) => record.method === 'POST' && record.path.includes(`/releases/${releaseId}/accept`));
+}
+
+function allAcceptRecords(serviceId: string, releaseId: string) {
+  return acceptRecords(serviceId, releaseId);
+}
+
+function chunkIndexOf(record: { path: string }): number | null {
+  const match = /[?&]chunk=(\d+)/.exec(record.path);
+  return match ? Number(match[1]) : null;
+}
+
+function progressService(release: any, serviceId: string): any {
+  for (const batch of release.progress?.batches ?? []) {
+    const found = batch.services.find((service: any) => service.serviceId === serviceId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function routeIdsOf(record: { requestBodyPreview?: string; routeIds: string[] }): string[] {
+  if (record.routeIds.length > 0) return record.routeIds;
+  try {
+    const body = JSON.parse(record.requestBodyPreview ?? '{}');
+    return Array.isArray(body.changes) ? body.changes.map((change: any) => String(change?.routeId ?? '')) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function waitServiceReleaseStatus(
+  serviceId: string,
+  releaseId: string,
+  predicate: (body: any) => boolean,
+  timeoutMs = 12_000,
+): Promise<any> {
+  return waitFor(
+    `${serviceId} release status ${releaseId}`,
+    async () => {
+      const response = await directFetch(serviceId, `/__admin/releases/${encodeURIComponent(releaseId)}`);
+      if (response.status !== 200) return null;
+      return predicate(response.body) ? response.body : null;
+    },
+    timeoutMs,
+  );
+}
+
+async function bulkChanges(count: number, offset = 0): Promise<any[]> {
+  const routes = cluster!.fixture.services.find((service) => service.id === 'bulk')!.routes;
+  assert.ok(routes.length >= count, 'bulk fixture must define enough routes');
+  return routes.slice(offset, offset + count).map((route, index) => ({
+    serviceId: 'bulk',
+    routeId: route.id,
+    timeoutMs: 2000 + (index % 97),
+    rateLimitPerMinute: 100 + (index % 29),
+  }));
 }
 
 function hasAnyReleaseRequest(serviceId: string, releaseId: string): boolean {
@@ -163,9 +224,11 @@ async function main(): Promise<void> {
     fixturePath: FIXTURE_PATH,
     requestTimeoutMs: 250,
     reconcileIntervalMs: 120,
+    dispatchMaxBytes: 16 * 1024,
   });
   console.log(`临时持久化目录: ${cluster.dataDir}`);
   console.log(`协调器: ${cluster.coordinatorUrl}/`);
+  console.log(`单次下发上限: ${cluster.dispatchMaxBytes} bytes`);
 
   await check('初始配置与模拟转发数据面可用', async () => {
     const health = await cFetch('/health');
@@ -451,6 +514,275 @@ async function main(): Promise<void> {
     assert.equal(config.body.effective.timeoutMs, 700);
   });
 
+  await check('超下发上限的单服务发布按实际字节拆片，每片只带本发布在该服务的内容', async () => {
+    const bulk = cluster!.getService('bulk');
+    bulk.proxy.reset();
+    const changes = await bulkChanges(260);
+    const created = await createRelease({
+      releaseId: 'rel-chunked-bulk',
+      changes,
+    });
+    const plan = created.services.bulk.chunkPlan;
+    assert.ok(plan, `协调器应为该服务保存分片计划；实际 services=${JSON.stringify(created.services?.bulk)}`);
+    assert.ok(plan.total >= 2, `260 条变更应拆成多片，实际 ${plan.total} 片`);
+    assert.equal(created.dispatchMaxBytes, 16 * 1024);
+
+    const done = await waitRelease('rel-chunked-bulk', (r) => r.status === 'completed', 20_000);
+    assert.equal(progressService(done, 'bulk').chunks.total, plan.total);
+
+    const records = allAcceptRecords('bulk', 'rel-chunked-bulk');
+    assert.ok(records.length >= plan.total, '应至少每片一次 accept 请求');
+    const chunkIndexes = new Set<number>();
+    let totalBytes = 0;
+    const expectedRouteIds = new Set(changes.map((change) => change.routeId));
+    for (const record of records) {
+      const index = chunkIndexOf(record);
+      assert.notEqual(index, null, `每个分片请求都应带 chunk 序号: ${record.path}`);
+      chunkIndexes.add(index!);
+      assert.ok(record.requestBytes <= 16 * 1024, `分片 ${index} 请求体 ${record.requestBytes} 字节超过 16 KiB`);
+      totalBytes += record.requestBytes;
+      const routeIds = routeIdsOf(record);
+      assert.ok(routeIds.length > 0, '分片请求应包含变更');
+      for (const routeId of routeIds) {
+        assert.ok(expectedRouteIds.has(routeId), `分片不应包含本次发布之外的 ${routeId}`);
+        assert.ok(routeId.startsWith('bulk-'), `分片不应包含其他服务的路由 ${routeId}`);
+      }
+    }
+    assert.equal(chunkIndexes.size, plan.total, '每个分片序号都应被下发');
+    assert.ok(totalBytes > 16 * 1024, `整组变更 ${totalBytes} 字节应超过单次下发上限，才有意义`);
+
+    const first = await directFetch('bulk', '/__admin/config/bulk-0001');
+    assert.equal(first.body.effective.timeoutMs, 2000);
+    const lastChange = changes[changes.length - 1]!;
+    const lastRoute = await directFetch('bulk', `/__admin/config/${lastChange.routeId}`);
+    assert.equal(lastRoute.body.effective.timeoutMs, lastChange.timeoutMs);
+    const untouched = await directFetch('bulk', '/__admin/config/bulk-0261');
+    assert.equal(untouched.body.effective.timeoutMs, 1000 + ((260 % 50) * 10));
+
+    await cFetch('/api/releases/rel-chunked-bulk/revoke', { method: 'POST' });
+    await waitRelease('rel-chunked-bulk', (r) => r.status === 'revoked');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 1000);
+  });
+
+  await check('单次下发上限可按发布配置：更小上限拆出更多分片，放不下的单条变更明确拒绝', async () => {
+    const small = await createRelease({
+      releaseId: 'rel-chunk-small-cap',
+      dispatchMaxBytes: 1024,
+      changes: await bulkChanges(260),
+    });
+    assert.equal(small.dispatchMaxBytes, 1024);
+    const plan = small.services.bulk.chunkPlan;
+    assert.ok(plan.total >= 20, `1 KiB 上限下 260 条变更应拆成 20 片以上，实际 ${plan.total}`);
+    await waitRelease('rel-chunk-small-cap', (r) => r.status === 'completed', 20_000);
+    const records = allAcceptRecords('bulk', 'rel-chunk-small-cap');
+    for (const record of records) {
+      assert.ok(record.requestBytes <= 1024, `按发布配置的上限仍是 1024，实际 ${record.requestBytes}`);
+    }
+    await cFetch('/api/releases/rel-chunk-small-cap/revoke', { method: 'POST' });
+    await waitRelease('rel-chunk-small-cap', (r) => r.status === 'revoked');
+
+    const tooSmall = await cFetch('/api/releases', {
+      method: 'POST',
+      body: JSON.stringify({
+        releaseId: 'rel-chunk-impossible',
+        dispatchMaxBytes: 120,
+        changes: [{ serviceId: 'bulk', routeId: 'bulk-0001', timeoutMs: 4321, rateLimitPerMinute: 9999 }],
+      }),
+      headers: { 'content-type': 'application/json' },
+    });
+    assert.equal(tooSmall.status, 400, tooSmall.text);
+    assert.ok(tooSmall.body.error.includes('dispatch limit'), tooSmall.text);
+
+    const invalidCap = await cFetch('/api/releases', {
+      method: 'POST',
+      body: JSON.stringify({
+        releaseId: 'rel-chunk-invalid-cap',
+        dispatchMaxBytes: 0,
+        changes: [{ serviceId: 'bulk', routeId: 'bulk-0001', timeoutMs: 4321 }],
+      }),
+      headers: { 'content-type': 'application/json' },
+    });
+    assert.equal(invalidCap.status, 400, invalidCap.text);
+  });
+
+  await check('分片收齐前保持原配置；同服务的其他发布不被卡住，整组生效后按受理顺序选值', async () => {
+    const bulk = cluster!.getService('bulk');
+    bulk.proxy.reset();
+    await addChaosRule('bulk', {
+      match: { pathIncludes: 'rel-mid-a', chunkIndex: 1 },
+      dropRequest: true,
+    });
+
+    const changes = await bulkChanges(260);
+    const a = await createRelease({
+      releaseId: 'rel-mid-a',
+      targetServiceIds: ['bulk', 'risk'],
+      batches: [['bulk'], ['risk']],
+      changes: [...changes, { serviceId: 'risk', routeId: 'score-order', timeoutMs: 3030 }],
+    });
+    assert.ok((a.services.bulk.chunkPlan.total ?? 0) >= 2, 'A 应被拆成多片');
+
+    const partial = await waitServiceReleaseStatus('bulk', 'rel-mid-a', (body) => body.status === 'pending');
+    assert.deepEqual(partial.receivedChunks, [0], '目前应只持久收到分片 0');
+    assert.ok(partial.missingChunks.includes(1));
+    const beforeApply = await directFetch('bulk', '/__admin/config/bulk-0001');
+    assert.equal(beforeApply.body.effective.timeoutMs, 1000, '服务收齐整组前必须继续使用原配置');
+    assert.equal(hasAnyReleaseRequest('risk', 'rel-mid-a'), false, '上一批整组未生效前不应下发下一批');
+
+    // B covers the same config key on the same service; A being incomplete
+    // must not block it.
+    await createRelease({
+      releaseId: 'rel-mid-b',
+      changes: [{ serviceId: 'bulk', routeId: 'bulk-0001', timeoutMs: 4321 }],
+    });
+    await waitRelease('rel-mid-b', (r) => r.status === 'completed');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 4321);
+
+    await resetChaos('bulk');
+    const aDone = await waitRelease('rel-mid-a', (r) => r.status === 'completed', 20_000);
+    assert.equal(aDone.progress.confirmedBatches, 2);
+    const afterA = await directFetch('bulk', '/__admin/config/bulk-0001');
+    assert.equal(afterA.body.effective.timeoutMs, 4321, '两份都被接纳后，较晚受理的 B 仍是赢家');
+    const aValue = changes[1]!;
+    const otherRoute = await directFetch('bulk', `/__admin/config/${aValue.routeId}`);
+    assert.equal(otherRoute.body.effective.timeoutMs, aValue.timeoutMs);
+
+    await cFetch('/api/releases/rel-mid-b/revoke', { method: 'POST' });
+    await waitRelease('rel-mid-b', (r) => r.status === 'revoked');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 2000);
+
+    await cFetch('/api/releases/rel-mid-a/revoke', { method: 'POST' });
+    await waitRelease('rel-mid-a', (r) => r.status === 'revoked', 20_000);
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 1000);
+    await waitConfig('bulk', aValue.routeId, (c) => c.timeoutMs === 1000 + (1 % 50) * 10);
+  });
+
+  await check('通过原有入口撤销已完成的分片发布时，整组回退到其他适用发布或初始值', async () => {
+    const bulk = cluster!.getService('bulk');
+    bulk.proxy.reset();
+    const base = await createRelease({
+      releaseId: 'rel-fallback-base',
+      changes: [
+        { serviceId: 'bulk', routeId: 'bulk-0001', timeoutMs: 777 },
+        { serviceId: 'bulk', routeId: 'bulk-0002', timeoutMs: 888, rateLimitPerMinute: 55 },
+        { serviceId: 'bulk', routeId: 'bulk-0003', timeoutMs: 999 },
+      ],
+    });
+    assert.ok(base.services.bulk.chunkPlan.total >= 1);
+    await waitRelease('rel-fallback-base', (r) => r.status === 'completed');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 777);
+
+    const changes = await bulkChanges(260);
+    const chunked = await createRelease({ releaseId: 'rel-fallback-chunked', changes });
+    assert.ok(chunked.services.bulk.chunkPlan.total >= 2, '回退组应跨多个分片');
+    await waitRelease('rel-fallback-chunked', (r) => r.status === 'completed', 20_000);
+    const covered = await directFetch('bulk', '/__admin/config/bulk-0004');
+    assert.equal(covered.body.effective.timeoutMs, changes[3]!.timeoutMs);
+
+    const revoke = await cFetch('/api/releases/rel-fallback-chunked/revoke', { method: 'POST' });
+    assert.equal(revoke.status, 202);
+    const revoked = await waitRelease('rel-fallback-chunked', (r) => r.status === 'revoked', 20_000);
+    assert.equal(revoked.revocationProgress.confirmedBatches, revoked.revocationProgress.totalBatches);
+
+    // Routes also covered by the older release fall back to it.
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 777);
+    await waitConfig('bulk', 'bulk-0002', (c) => c.timeoutMs === 888 && c.rateLimitPerMinute === 55);
+    await waitConfig('bulk', 'bulk-0003', (c) => c.timeoutMs === 999);
+    // Every other route in the revoked group falls back to its initial value.
+    await waitConfig('bulk', 'bulk-0004', (c) => c.timeoutMs === 1000 + ((3 % 50) * 10));
+    const lastChange = changes[changes.length - 1]!;
+    const lastIndex = 259;
+    await waitConfig('bulk', lastChange.routeId, (c) => c.timeoutMs === 1000 + ((lastIndex % 50) * 10));
+
+    const serviceState = await directFetch('bulk', '/__admin/releases/rel-fallback-chunked');
+    assert.equal(serviceState.body.status, 'revoked');
+    assert.equal(serviceState.body.changesApplied, false);
+
+    await cFetch('/api/releases/rel-fallback-base/revoke', { method: 'POST' });
+    await waitRelease('rel-fallback-base', (r) => r.status === 'revoked');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 1000);
+    await waitConfig('bulk', 'bulk-0002', (c) => c.timeoutMs === 1010 && c.rateLimitPerMinute === 101);
+  });
+
+  await check('应答丢失后只补发服务未持久收到的分片，不重发已落盘分片', async () => {
+    const bulk = cluster!.getService('bulk');
+    bulk.proxy.reset();
+    await addChaosRule('bulk', {
+      match: { pathIncludes: 'rel-lost-chunk', chunkIndex: 0 },
+      dropResponse: true,
+    });
+    await createRelease({
+      releaseId: 'rel-lost-chunk',
+      changes: await bulkChanges(260),
+    });
+    await waitRelease('rel-lost-chunk', (r) => r.status === 'completed', 20_000);
+
+    const records = allAcceptRecords('bulk', 'rel-lost-chunk');
+    const chunkZero = records.filter((record) => chunkIndexOf(record) === 0);
+    assert.equal(chunkZero.length, 1, '分片 0 已落盘，应答丢失后不应再次下发');
+    assert.equal(chunkZero[0]!.outcome, 'response-dropped');
+    const otherIndexes = new Set(records.filter((record) => chunkIndexOf(record) !== 0).map(chunkIndexOf));
+    assert.ok(otherIndexes.size >= 1, '其余分片应被补发');
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 2000);
+
+    await cFetch('/api/releases/rel-lost-chunk/revoke', { method: 'POST' });
+    await waitRelease('rel-lost-chunk', (r) => r.status === 'revoked', 20_000);
+    await resetChaos('bulk');
+  });
+
+  await check('服务与协调器重启后，只按已持久收到的分片继续补发并由协调器确认', async () => {
+    const bulk = cluster!.getService('bulk');
+    bulk.proxy.reset();
+    await addChaosRule('bulk', {
+      match: { pathIncludes: 'rel-restart-chunked', chunkIndex: 1 },
+      dropRequest: true,
+    });
+    await createRelease({
+      releaseId: 'rel-restart-chunked',
+      changes: await bulkChanges(260),
+    });
+    const partial = await waitServiceReleaseStatus('bulk', 'rel-restart-chunked', (body) => body.status === 'pending');
+    assert.deepEqual(partial.receivedChunks, [0]);
+    const beforeRestart = await directFetch('bulk', '/__admin/config/bulk-0001');
+    assert.equal(beforeRestart.body.effective.timeoutMs, 1000);
+
+    const chunkZeroBefore = allAcceptRecords('bulk', 'rel-restart-chunked').filter(
+      (record) => chunkIndexOf(record) === 0,
+    ).length;
+    await cluster!.restartService('bulk');
+    const afterServiceRestart = await waitServiceReleaseStatus(
+      'bulk',
+      'rel-restart-chunked',
+      (body) => body.status === 'pending',
+    );
+    assert.deepEqual(afterServiceRestart.receivedChunks, [0], '服务重启后应从磁盘恢复已收到的分片');
+    const stillOld = await directFetch('bulk', '/__admin/config/bulk-0001');
+    assert.equal(stillOld.body.effective.timeoutMs, 1000, '重启后未收齐前仍用原配置');
+
+    await cluster!.restartCoordinator();
+    await delay(200);
+    const chunkZeroAfterRestart = allAcceptRecords('bulk', 'rel-restart-chunked').filter(
+      (record) => chunkIndexOf(record) === 0,
+    ).length;
+    assert.equal(chunkZeroAfterRestart, chunkZeroBefore, '两端重启后不应补发已持久收到的分片 0');
+
+    await clearChaosRules('bulk');
+    await cFetch('/api/reconcile', { method: 'POST' });
+    const done = await waitRelease('rel-restart-chunked', (r) => r.status === 'completed', 20_000);
+    const doneService = progressService(done, 'bulk');
+    assert.equal(doneService.chunks.confirmed, doneService.chunks.total);
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 2000);
+    assert.equal(
+      allAcceptRecords('bulk', 'rel-restart-chunked').filter((record) => chunkIndexOf(record) === 0).length,
+      chunkZeroBefore,
+      '恢复后仍不应重发分片 0',
+    );
+
+    await cFetch('/api/releases/rel-restart-chunked/revoke', { method: 'POST' });
+    await waitRelease('rel-restart-chunked', (r) => r.status === 'revoked', 20_000);
+    await waitConfig('bulk', 'bulk-0001', (c) => c.timeoutMs === 1000);
+  });
+
   await check('单路由读取为物化 O(1)：20,000 条历史下 100,000 次读取保持快速', async () => {
     const perfDir = path.join(os.tmpdir(), `route-perf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(perfDir, { recursive: true });
@@ -642,7 +974,9 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
-  console.log('全部自检通过：发布、暂停、并发优先级、原子性、持久化、重启对账和夹具控制均正常。');
+  console.log(
+    '全部自检通过：分片下发大小、分批推进、收齐前保持原配置、应答丢失与重启恢复、撤销回退、原子性、持久化均正常。',
+  );
   process.exit(0);
 }
 

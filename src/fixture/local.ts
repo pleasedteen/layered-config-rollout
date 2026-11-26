@@ -3,7 +3,7 @@ import path from 'node:path';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { FixtureCluster } from './cluster.js';
-import { parseCliArgs, readJsonBody, sendJson } from '../shared/http.js';
+import { optionalNumberArg, parseCliArgs, readJsonBody, sendJson } from '../shared/http.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..', '..');
@@ -13,6 +13,10 @@ const dataDir = path.join(projectRoot, '.runtime', 'local');
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
   if (args.fresh === true) await rm(dataDir, { recursive: true, force: true });
+  const dispatchMaxBytes = optionalNumberArg(args, 'dispatch-max-bytes') ?? 16 * 1024;
+  if (!Number.isInteger(dispatchMaxBytes) || dispatchMaxBytes < 1) {
+    throw new Error('--dispatch-max-bytes must be a positive integer');
+  }
 
   const cluster = await FixtureCluster.start({
     fixturePath,
@@ -25,6 +29,7 @@ async function main(): Promise<void> {
     },
     requestTimeoutMs: Number(args['request-timeout-ms'] ?? 1000),
     reconcileIntervalMs: Number(args['reconcile-ms'] ?? 700),
+    dispatchMaxBytes,
     verbose: args.verbose === true,
   });
 
@@ -121,7 +126,8 @@ async function main(): Promise<void> {
 
   console.log('\n本地夹具已启动:');
   console.log(`  协调器/看板: ${cluster.coordinatorUrl}/`);
-  console.log('  夹具控制 API: http://127.0.0.1:4400/');
+  console.log(`  夹具控制 API: http://127.0.0.1:4400/`);
+  console.log(`  单次下发上限: ${dispatchMaxBytes} bytes`);
   for (const service of cluster.services.values()) {
     console.log(`  ${service.id}: 直连 ${service.directUrl} | 混沌入口 ${service.chaosUrl}`);
   }

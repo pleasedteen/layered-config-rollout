@@ -60,6 +60,7 @@ export interface FixtureClusterOptions {
   servicePorts?: Record<string, { direct?: number; chaos?: number }>;
   requestTimeoutMs?: number;
   reconcileIntervalMs?: number;
+  dispatchMaxBytes?: number;
   startCoordinator?: boolean;
   verbose?: boolean;
 }
@@ -70,6 +71,7 @@ export class FixtureCluster {
   readonly fixturePath: string;
   readonly requestTimeoutMs: number;
   readonly reconcileIntervalMs: number;
+  readonly dispatchMaxBytes: number | undefined;
   readonly services = new Map<string, ManagedService>();
   coordinatorPort: number | undefined;
   coordinatorUrl: string | undefined;
@@ -84,6 +86,7 @@ export class FixtureCluster {
     this.dataDir = dataDir;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 350;
     this.reconcileIntervalMs = options.reconcileIntervalMs ?? 250;
+    this.dispatchMaxBytes = options.dispatchMaxBytes;
   }
 
   static async start(options: FixtureClusterOptions): Promise<FixtureCluster> {
@@ -143,6 +146,7 @@ export class FixtureCluster {
       fixturePath: this.fixturePath,
       requestTimeoutMs: this.requestTimeoutMs,
       reconcileIntervalMs: this.reconcileIntervalMs,
+      dispatchMaxBytes: this.dispatchMaxBytes,
       services: this.endpoints(),
     };
     this.clusterConfigPath = path.join(this.dataDir, 'cluster-config.json');
@@ -240,6 +244,9 @@ export class FixtureCluster {
         `--data-dir=${this.dataDir}`,
         `--fixture=${this.fixturePath}`,
         `--cluster-config=${this.clusterConfigPath}`,
+        ...(this.dispatchMaxBytes !== undefined
+          ? [`--dispatch-max-bytes=${this.dispatchMaxBytes}`]
+          : []),
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );

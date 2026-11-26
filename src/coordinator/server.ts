@@ -8,6 +8,7 @@ function releaseView(release: ReleaseRecord) {
   const rolloutBatches = release.batches.map((serviceIds, index) => {
     const services = serviceIds.map((serviceId) => {
       const state = release.services[serviceId];
+      const plan = state?.chunkPlan;
       return {
         serviceId,
         confirmed: state?.status === 'accepted',
@@ -16,6 +17,13 @@ function releaseView(release: ReleaseRecord) {
         lastError: state?.lastError,
         serviceAcceptedAt: state?.serviceAcceptedAt,
         coordinatorConfirmedAt: state?.coordinatorConfirmedAt,
+        chunks: plan
+          ? {
+              total: plan.total,
+              confirmed: state?.chunksSent?.length ?? 0,
+              maxBytes: plan.bytes.length ? Math.max(...plan.bytes) : 0,
+            }
+          : undefined,
       };
     });
     return {
@@ -108,8 +116,8 @@ document.addEventListener('click', event => {
 function renderReleases(data) {
   if (!data.releases.length) return '<p class="muted">暂无发布。</p>';
   return data.releases.map(r => {
-    const p = r.progress;
-    const batches = p.batches.map(b => '<li>批次 ' + b.index + ' [' + b.serviceIds.map(esc).join(', ') + ']: ' + (b.confirmed ? '<span class=ok>已确认</span>' : b.services.map(s => esc(s.serviceId + ':' + s.status + (s.attempts ? '(' + s.attempts + ')' : ''))).join('；')) + '</li>').join('');
+                    const p = r.progress;
+    const batches = p.batches.map(b => '<li>批次 ' + b.index + ' [' + b.serviceIds.map(esc).join(', ') + ']: ' + (b.confirmed ? '<span class=ok>已确认</span> ' : '') + b.services.map(s => esc(s.serviceId + ':' + s.status + (s.chunks ? ' 分片' + s.chunks.confirmed + '/' + s.chunks.total : '') + (s.attempts ? '(' + s.attempts + ')' : '')).join('；') + '</li>').join('');
     const actions = [];
     if (r.status === 'running' || r.status === 'pausing') actions.push('<button data-action="pause" data-id="'+esc(r.id)+'">暂停</button>');
     if (r.status === 'paused') actions.push('<button data-action="resume" data-id="'+esc(r.id)+'">继续</button>');

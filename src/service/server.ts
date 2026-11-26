@@ -65,12 +65,19 @@ export function createForwardServiceServer(service: ConfigService): http.Server 
 
         if (req.method === 'GET' && segments[1] === 'releases' && segments[2]) {
           const releaseId = decodeURIComponent(segments[2]);
-          const release = service.getRelease(releaseId);
-          if (!release) {
-            sendJson(res, 404, { ok: false, releaseId, status: 'absent' });
+          const status = service.getReleaseStatus(releaseId);
+          if (status.status === 'absent') {
+            sendJson(res, 404, {
+              ok: false,
+              releaseId,
+              status: 'absent',
+              chunkCount: null,
+              receivedChunks: [],
+              missingChunks: [],
+            });
             return;
           }
-          sendJson(res, 200, release);
+          sendJson(res, 200, status);
           return;
         }
 

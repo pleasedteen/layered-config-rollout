@@ -5,6 +5,8 @@ import { sendJson, readJsonBody } from '../shared/http.js';
 export interface ChaosMatch {
   method?: string;
   pathIncludes?: string;
+  /** Exact value of the `chunk` query parameter, for chunked accept requests. */
+  chunkIndex?: number;
 }
 
 export interface ChaosPolicy {
@@ -93,11 +95,12 @@ export class ChaosProxy {
     if (this.requests.length > 500) this.requests.shift();
   }
 
-  private selectPolicy(method: string, path: string): ChaosPolicy {
+  private selectPolicy(method: string, path: string, chunkIndex: number | undefined): ChaosPolicy {
     const policy: ChaosPolicy = {};
     for (const rule of this.rules) {
       if (rule.match?.method && rule.match.method.toUpperCase() !== method.toUpperCase()) continue;
       if (rule.match?.pathIncludes && !path.includes(rule.match.pathIncludes)) continue;
+      if (rule.match?.chunkIndex !== undefined && rule.match.chunkIndex !== chunkIndex) continue;
       if (rule.remaining !== undefined) {
         if (rule.remaining <= 0) continue;
         rule.remaining -= 1;
@@ -173,7 +176,9 @@ export class ChaosProxy {
       // Non-JSON request; routeIds remains empty.
     }
 
-    const policy = this.selectPolicy(req.method ?? 'GET', url.pathname);
+    const chunkParam = url.searchParams.get('chunk');
+    const chunkIndex = chunkParam !== null && chunkParam !== '' ? Number(chunkParam) : undefined;
+    const policy = this.selectPolicy(req.method ?? 'GET', url.pathname, Number.isNaN(chunkIndex) ? undefined : chunkIndex);
     const baseRecord: ChaosRequestRecord = {
       id: randomUUID(),
       at: new Date().toISOString(),

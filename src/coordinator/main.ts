@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { Coordinator } from './coordinator.js';
 import { createCoordinatorServer } from './server.js';
-import { numberArg, parseCliArgs, requireStringArg } from '../shared/http.js';
+import { numberArg, optionalNumberArg, parseCliArgs, requireStringArg } from '../shared/http.js';
 import { ConfigService } from '../service/config-service.js';
 import type { ClusterConfig } from '../shared/types.js';
 
@@ -19,12 +19,14 @@ async function main(): Promise<void> {
   }
 
   const fixture = await ConfigService.loadFixture(fixturePath);
+  const dispatchMaxBytes = optionalNumberArg(args, 'dispatch-max-bytes') ?? clusterConfig?.dispatchMaxBytes;
   const coordinator = new Coordinator({
     dataDir,
     fixture,
     endpoints: clusterConfig?.services ?? [],
     requestTimeoutMs: clusterConfig?.requestTimeoutMs ?? 1200,
     reconcileIntervalMs: clusterConfig?.reconcileIntervalMs ?? 700,
+    dispatchMaxBytes,
   });
   await coordinator.start();
   coordinator.startPeriodicReconcile(clusterConfig?.reconcileIntervalMs ?? 700);
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
   console.log(`[coordinator] listening on http://127.0.0.1:${actualPort}`);
   console.log(`[coordinator] dashboard http://127.0.0.1:${actualPort}/`);
   console.log(`[coordinator] state ${path.join(dataDir, 'coordinator-state.json')}`);
+  console.log(`[coordinator] max dispatch body ${coordinator.defaultDispatchMaxBytes} bytes`);
 
   const shutdown = (signal: string) => {
     console.log(`[coordinator] received ${signal}, closing`);

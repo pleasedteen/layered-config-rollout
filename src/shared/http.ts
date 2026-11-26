@@ -73,6 +73,14 @@ export function numberArg(
   return parsed;
 }
 
+export function optionalNumberArg(args: Record<string, string | boolean>, key: string): number | undefined {
+  const value = args[key];
+  if (value === undefined || value === true) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`--${key} must be a number`);
+  return parsed;
+}
+
 export async function fetchJson(
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},

@@ -9,85 +9,169 @@
           "id": "create-order",
           "method": "POST",
           "path": "/proxy/create-order",
-          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
-          "upstream": { "latencyMs": 12, "status": 201, "body": "order-created" }
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 60
+          },
+          "upstream": {
+            "latencyMs": 12,
+            "status": 201,
+            "body": "order-created"
+          }
         },
         {
           "id": "confirm-payment",
           "method": "POST",
           "path": "/proxy/confirm-payment",
-          "initial": { "timeoutMs": 1200, "rateLimitPerMinute": 30 },
-          "upstream": { "latencyMs": 18, "status": 200, "body": "payment-confirmed" }
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 30
+          },
+          "upstream": {
+            "latencyMs": 18,
+            "status": 200,
+            "body": "payment-confirmed"
+          }
         },
         {
           "id": "calculate-shipping",
           "method": "GET",
           "path": "/proxy/calculate-shipping",
-          "initial": { "timeoutMs": 800, "rateLimitPerMinute": 120 },
-          "upstream": { "latencyMs": 20, "status": 200, "body": "shipping-quote" }
+          "initial": {
+            "timeoutMs": 800,
+            "rateLimitPerMinute": 120
+          },
+          "upstream": {
+            "latencyMs": 20,
+            "status": 200,
+            "body": "shipping-quote"
+          }
         },
         {
           "id": "inventory-reserve",
           "method": "POST",
           "path": "/proxy/inventory-reserve",
-          "initial": { "timeoutMs": 900, "rateLimitPerMinute": 45 },
-          "upstream": { "latencyMs": 15, "status": 200, "body": "reserved" }
+          "initial": {
+            "timeoutMs": 900,
+            "rateLimitPerMinute": 45
+          },
+          "upstream": {
+            "latencyMs": 15,
+            "status": 200,
+            "body": "reserved"
+          }
         },
         {
           "id": "customer-profile",
           "method": "GET",
           "path": "/proxy/customer-profile",
-          "initial": { "timeoutMs": 700, "rateLimitPerMinute": 200 },
-          "upstream": { "latencyMs": 10, "status": 200, "body": "profile" }
+          "initial": {
+            "timeoutMs": 700,
+            "rateLimitPerMinute": 200
+          },
+          "upstream": {
+            "latencyMs": 10,
+            "status": 200,
+            "body": "profile"
+          }
         },
         {
           "id": "webhook-delivery",
           "method": "POST",
           "path": "/proxy/webhook-delivery",
-          "initial": { "timeoutMs": 5000, "rateLimitPerMinute": 600 },
-          "upstream": { "latencyMs": 8, "status": 202, "body": "accepted" }
+          "initial": {
+            "timeoutMs": 5000,
+            "rateLimitPerMinute": 600
+          },
+          "upstream": {
+            "latencyMs": 8,
+            "status": 202,
+            "body": "accepted"
+          }
         },
         {
           "id": "concurrent-precedence",
           "method": "GET",
           "path": "/proxy/concurrent-precedence",
-          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 100 },
-          "upstream": { "latencyMs": 5, "status": 200, "body": "precedence" }
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 5,
+            "status": 200,
+            "body": "precedence"
+          }
         },
         {
           "id": "atomic-a",
           "method": "GET",
           "path": "/proxy/atomic-a",
-          "initial": { "timeoutMs": 1100, "rateLimitPerMinute": 111 },
-          "upstream": { "latencyMs": 5, "status": 200, "body": "a" }
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 5,
+            "status": 200,
+            "body": "a"
+          }
         },
         {
           "id": "atomic-b",
           "method": "GET",
           "path": "/proxy/atomic-b",
-          "initial": { "timeoutMs": 1200, "rateLimitPerMinute": 222 },
-          "upstream": { "latencyMs": 5, "status": 200, "body": "b" }
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 222
+          },
+          "upstream": {
+            "latencyMs": 5,
+            "status": 200,
+            "body": "b"
+          }
         },
         {
           "id": "restart-route",
           "method": "GET",
           "path": "/proxy/restart-route",
-          "initial": { "timeoutMs": 1300, "rateLimitPerMinute": 333 },
-          "upstream": { "latencyMs": 5, "status": 200, "body": "restart" }
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 333
+          },
+          "upstream": {
+            "latencyMs": 5,
+            "status": 200,
+            "body": "restart"
+          }
         },
         {
           "id": "slow-quote",
           "method": "GET",
           "path": "/proxy/slow-quote",
-          "initial": { "timeoutMs": 500, "rateLimitPerMinute": 100 },
-          "upstream": { "latencyMs": 120, "status": 200, "body": "slow-quote" }
+          "initial": {
+            "timeoutMs": 500,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 120,
+            "status": 200,
+            "body": "slow-quote"
+          }
         },
         {
           "id": "rate-limited-demo",
           "method": "GET",
           "path": "/proxy/rate-limited-demo",
-          "initial": { "timeoutMs": 500, "rateLimitPerMinute": 100 },
-          "upstream": { "latencyMs": 4, "status": 200, "body": "rate-demo" }
+          "initial": {
+            "timeoutMs": 500,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 4,
+            "status": 200,
+            "body": "rate-demo"
+          }
         }
       ]
     },
@@ -99,29 +183,57 @@
           "id": "charge-card",
           "method": "POST",
           "path": "/proxy/charge-card",
-          "initial": { "timeoutMs": 2000, "rateLimitPerMinute": 20 },
-          "upstream": { "latencyMs": 30, "status": 200, "body": "charged" }
+          "initial": {
+            "timeoutMs": 2000,
+            "rateLimitPerMinute": 20
+          },
+          "upstream": {
+            "latencyMs": 30,
+            "status": 200,
+            "body": "charged"
+          }
         },
         {
           "id": "refund",
           "method": "POST",
           "path": "/proxy/refund",
-          "initial": { "timeoutMs": 2000, "rateLimitPerMinute": 20 },
-          "upstream": { "latencyMs": 25, "status": 200, "body": "refunded" }
+          "initial": {
+            "timeoutMs": 2000,
+            "rateLimitPerMinute": 20
+          },
+          "upstream": {
+            "latencyMs": 25,
+            "status": 200,
+            "body": "refunded"
+          }
         },
         {
           "id": "payment-methods",
           "method": "GET",
           "path": "/proxy/payment-methods",
-          "initial": { "timeoutMs": 800, "rateLimitPerMinute": 100 },
-          "upstream": { "latencyMs": 12, "status": 200, "body": "methods" }
+          "initial": {
+            "timeoutMs": 800,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 12,
+            "status": 200,
+            "body": "methods"
+          }
         },
         {
           "id": "ledger-entries",
           "method": "GET",
           "path": "/proxy/ledger-entries",
-          "initial": { "timeoutMs": 1500, "rateLimitPerMinute": 80 },
-          "upstream": { "latencyMs": 22, "status": 200, "body": "entries" }
+          "initial": {
+            "timeoutMs": 1500,
+            "rateLimitPerMinute": 80
+          },
+          "upstream": {
+            "latencyMs": 22,
+            "status": 200,
+            "body": "entries"
+          }
         }
       ]
     },
@@ -133,22 +245,4249 @@
           "id": "score-order",
           "method": "POST",
           "path": "/proxy/score-order",
-          "initial": { "timeoutMs": 600, "rateLimitPerMinute": 200 },
-          "upstream": { "latencyMs": 16, "status": 200, "body": "score" }
+          "initial": {
+            "timeoutMs": 600,
+            "rateLimitPerMinute": 200
+          },
+          "upstream": {
+            "latencyMs": 16,
+            "status": 200,
+            "body": "score"
+          }
         },
         {
           "id": "device-fingerprint",
           "method": "GET",
           "path": "/proxy/device-fingerprint",
-          "initial": { "timeoutMs": 400, "rateLimitPerMinute": 500 },
-          "upstream": { "latencyMs": 8, "status": 200, "body": "fingerprint" }
+          "initial": {
+            "timeoutMs": 400,
+            "rateLimitPerMinute": 500
+          },
+          "upstream": {
+            "latencyMs": 8,
+            "status": 200,
+            "body": "fingerprint"
+          }
         },
         {
           "id": "rules-config",
           "method": "GET",
           "path": "/proxy/rules-config",
-          "initial": { "timeoutMs": 1000, "rateLimitPerMinute": 60 },
-          "upstream": { "latencyMs": 14, "status": 200, "body": "rules" }
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 60
+          },
+          "upstream": {
+            "latencyMs": 14,
+            "status": 200,
+            "body": "rules"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bulk",
+      "displayName": "Bulk forwarding service with many routes",
+      "routes": [
+        {
+          "id": "bulk-0001",
+          "method": "GET",
+          "path": "/proxy/bulk-0001",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0002",
+          "method": "GET",
+          "path": "/proxy/bulk-0002",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0003",
+          "method": "GET",
+          "path": "/proxy/bulk-0003",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0004",
+          "method": "GET",
+          "path": "/proxy/bulk-0004",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0005",
+          "method": "GET",
+          "path": "/proxy/bulk-0005",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0006",
+          "method": "GET",
+          "path": "/proxy/bulk-0006",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0007",
+          "method": "GET",
+          "path": "/proxy/bulk-0007",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0008",
+          "method": "GET",
+          "path": "/proxy/bulk-0008",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0009",
+          "method": "GET",
+          "path": "/proxy/bulk-0009",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0010",
+          "method": "GET",
+          "path": "/proxy/bulk-0010",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0011",
+          "method": "GET",
+          "path": "/proxy/bulk-0011",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0012",
+          "method": "GET",
+          "path": "/proxy/bulk-0012",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0013",
+          "method": "GET",
+          "path": "/proxy/bulk-0013",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0014",
+          "method": "GET",
+          "path": "/proxy/bulk-0014",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0015",
+          "method": "GET",
+          "path": "/proxy/bulk-0015",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0016",
+          "method": "GET",
+          "path": "/proxy/bulk-0016",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0017",
+          "method": "GET",
+          "path": "/proxy/bulk-0017",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0018",
+          "method": "GET",
+          "path": "/proxy/bulk-0018",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0019",
+          "method": "GET",
+          "path": "/proxy/bulk-0019",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0020",
+          "method": "GET",
+          "path": "/proxy/bulk-0020",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0021",
+          "method": "GET",
+          "path": "/proxy/bulk-0021",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0022",
+          "method": "GET",
+          "path": "/proxy/bulk-0022",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0023",
+          "method": "GET",
+          "path": "/proxy/bulk-0023",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0024",
+          "method": "GET",
+          "path": "/proxy/bulk-0024",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0025",
+          "method": "GET",
+          "path": "/proxy/bulk-0025",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0026",
+          "method": "GET",
+          "path": "/proxy/bulk-0026",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0027",
+          "method": "GET",
+          "path": "/proxy/bulk-0027",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0028",
+          "method": "GET",
+          "path": "/proxy/bulk-0028",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0029",
+          "method": "GET",
+          "path": "/proxy/bulk-0029",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0030",
+          "method": "GET",
+          "path": "/proxy/bulk-0030",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0031",
+          "method": "GET",
+          "path": "/proxy/bulk-0031",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0032",
+          "method": "GET",
+          "path": "/proxy/bulk-0032",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0033",
+          "method": "GET",
+          "path": "/proxy/bulk-0033",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0034",
+          "method": "GET",
+          "path": "/proxy/bulk-0034",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0035",
+          "method": "GET",
+          "path": "/proxy/bulk-0035",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0036",
+          "method": "GET",
+          "path": "/proxy/bulk-0036",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0037",
+          "method": "GET",
+          "path": "/proxy/bulk-0037",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0038",
+          "method": "GET",
+          "path": "/proxy/bulk-0038",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0039",
+          "method": "GET",
+          "path": "/proxy/bulk-0039",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0040",
+          "method": "GET",
+          "path": "/proxy/bulk-0040",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0041",
+          "method": "GET",
+          "path": "/proxy/bulk-0041",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0042",
+          "method": "GET",
+          "path": "/proxy/bulk-0042",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0043",
+          "method": "GET",
+          "path": "/proxy/bulk-0043",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0044",
+          "method": "GET",
+          "path": "/proxy/bulk-0044",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0045",
+          "method": "GET",
+          "path": "/proxy/bulk-0045",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0046",
+          "method": "GET",
+          "path": "/proxy/bulk-0046",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0047",
+          "method": "GET",
+          "path": "/proxy/bulk-0047",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0048",
+          "method": "GET",
+          "path": "/proxy/bulk-0048",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0049",
+          "method": "GET",
+          "path": "/proxy/bulk-0049",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0050",
+          "method": "GET",
+          "path": "/proxy/bulk-0050",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0051",
+          "method": "GET",
+          "path": "/proxy/bulk-0051",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0052",
+          "method": "GET",
+          "path": "/proxy/bulk-0052",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0053",
+          "method": "GET",
+          "path": "/proxy/bulk-0053",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0054",
+          "method": "GET",
+          "path": "/proxy/bulk-0054",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0055",
+          "method": "GET",
+          "path": "/proxy/bulk-0055",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0056",
+          "method": "GET",
+          "path": "/proxy/bulk-0056",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0057",
+          "method": "GET",
+          "path": "/proxy/bulk-0057",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0058",
+          "method": "GET",
+          "path": "/proxy/bulk-0058",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0059",
+          "method": "GET",
+          "path": "/proxy/bulk-0059",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0060",
+          "method": "GET",
+          "path": "/proxy/bulk-0060",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0061",
+          "method": "GET",
+          "path": "/proxy/bulk-0061",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0062",
+          "method": "GET",
+          "path": "/proxy/bulk-0062",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0063",
+          "method": "GET",
+          "path": "/proxy/bulk-0063",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0064",
+          "method": "GET",
+          "path": "/proxy/bulk-0064",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0065",
+          "method": "GET",
+          "path": "/proxy/bulk-0065",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0066",
+          "method": "GET",
+          "path": "/proxy/bulk-0066",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0067",
+          "method": "GET",
+          "path": "/proxy/bulk-0067",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0068",
+          "method": "GET",
+          "path": "/proxy/bulk-0068",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0069",
+          "method": "GET",
+          "path": "/proxy/bulk-0069",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0070",
+          "method": "GET",
+          "path": "/proxy/bulk-0070",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0071",
+          "method": "GET",
+          "path": "/proxy/bulk-0071",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0072",
+          "method": "GET",
+          "path": "/proxy/bulk-0072",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0073",
+          "method": "GET",
+          "path": "/proxy/bulk-0073",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0074",
+          "method": "GET",
+          "path": "/proxy/bulk-0074",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0075",
+          "method": "GET",
+          "path": "/proxy/bulk-0075",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0076",
+          "method": "GET",
+          "path": "/proxy/bulk-0076",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0077",
+          "method": "GET",
+          "path": "/proxy/bulk-0077",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0078",
+          "method": "GET",
+          "path": "/proxy/bulk-0078",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0079",
+          "method": "GET",
+          "path": "/proxy/bulk-0079",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0080",
+          "method": "GET",
+          "path": "/proxy/bulk-0080",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0081",
+          "method": "GET",
+          "path": "/proxy/bulk-0081",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0082",
+          "method": "GET",
+          "path": "/proxy/bulk-0082",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0083",
+          "method": "GET",
+          "path": "/proxy/bulk-0083",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0084",
+          "method": "GET",
+          "path": "/proxy/bulk-0084",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0085",
+          "method": "GET",
+          "path": "/proxy/bulk-0085",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0086",
+          "method": "GET",
+          "path": "/proxy/bulk-0086",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0087",
+          "method": "GET",
+          "path": "/proxy/bulk-0087",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0088",
+          "method": "GET",
+          "path": "/proxy/bulk-0088",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0089",
+          "method": "GET",
+          "path": "/proxy/bulk-0089",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0090",
+          "method": "GET",
+          "path": "/proxy/bulk-0090",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0091",
+          "method": "GET",
+          "path": "/proxy/bulk-0091",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0092",
+          "method": "GET",
+          "path": "/proxy/bulk-0092",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0093",
+          "method": "GET",
+          "path": "/proxy/bulk-0093",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0094",
+          "method": "GET",
+          "path": "/proxy/bulk-0094",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0095",
+          "method": "GET",
+          "path": "/proxy/bulk-0095",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0096",
+          "method": "GET",
+          "path": "/proxy/bulk-0096",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0097",
+          "method": "GET",
+          "path": "/proxy/bulk-0097",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0098",
+          "method": "GET",
+          "path": "/proxy/bulk-0098",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0099",
+          "method": "GET",
+          "path": "/proxy/bulk-0099",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0100",
+          "method": "GET",
+          "path": "/proxy/bulk-0100",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0101",
+          "method": "GET",
+          "path": "/proxy/bulk-0101",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0102",
+          "method": "GET",
+          "path": "/proxy/bulk-0102",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0103",
+          "method": "GET",
+          "path": "/proxy/bulk-0103",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0104",
+          "method": "GET",
+          "path": "/proxy/bulk-0104",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0105",
+          "method": "GET",
+          "path": "/proxy/bulk-0105",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0106",
+          "method": "GET",
+          "path": "/proxy/bulk-0106",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0107",
+          "method": "GET",
+          "path": "/proxy/bulk-0107",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0108",
+          "method": "GET",
+          "path": "/proxy/bulk-0108",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0109",
+          "method": "GET",
+          "path": "/proxy/bulk-0109",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0110",
+          "method": "GET",
+          "path": "/proxy/bulk-0110",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0111",
+          "method": "GET",
+          "path": "/proxy/bulk-0111",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0112",
+          "method": "GET",
+          "path": "/proxy/bulk-0112",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0113",
+          "method": "GET",
+          "path": "/proxy/bulk-0113",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0114",
+          "method": "GET",
+          "path": "/proxy/bulk-0114",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0115",
+          "method": "GET",
+          "path": "/proxy/bulk-0115",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0116",
+          "method": "GET",
+          "path": "/proxy/bulk-0116",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0117",
+          "method": "GET",
+          "path": "/proxy/bulk-0117",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0118",
+          "method": "GET",
+          "path": "/proxy/bulk-0118",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0119",
+          "method": "GET",
+          "path": "/proxy/bulk-0119",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0120",
+          "method": "GET",
+          "path": "/proxy/bulk-0120",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0121",
+          "method": "GET",
+          "path": "/proxy/bulk-0121",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0122",
+          "method": "GET",
+          "path": "/proxy/bulk-0122",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0123",
+          "method": "GET",
+          "path": "/proxy/bulk-0123",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0124",
+          "method": "GET",
+          "path": "/proxy/bulk-0124",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0125",
+          "method": "GET",
+          "path": "/proxy/bulk-0125",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0126",
+          "method": "GET",
+          "path": "/proxy/bulk-0126",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0127",
+          "method": "GET",
+          "path": "/proxy/bulk-0127",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0128",
+          "method": "GET",
+          "path": "/proxy/bulk-0128",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0129",
+          "method": "GET",
+          "path": "/proxy/bulk-0129",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0130",
+          "method": "GET",
+          "path": "/proxy/bulk-0130",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0131",
+          "method": "GET",
+          "path": "/proxy/bulk-0131",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0132",
+          "method": "GET",
+          "path": "/proxy/bulk-0132",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0133",
+          "method": "GET",
+          "path": "/proxy/bulk-0133",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0134",
+          "method": "GET",
+          "path": "/proxy/bulk-0134",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0135",
+          "method": "GET",
+          "path": "/proxy/bulk-0135",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0136",
+          "method": "GET",
+          "path": "/proxy/bulk-0136",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0137",
+          "method": "GET",
+          "path": "/proxy/bulk-0137",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0138",
+          "method": "GET",
+          "path": "/proxy/bulk-0138",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0139",
+          "method": "GET",
+          "path": "/proxy/bulk-0139",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0140",
+          "method": "GET",
+          "path": "/proxy/bulk-0140",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0141",
+          "method": "GET",
+          "path": "/proxy/bulk-0141",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0142",
+          "method": "GET",
+          "path": "/proxy/bulk-0142",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0143",
+          "method": "GET",
+          "path": "/proxy/bulk-0143",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0144",
+          "method": "GET",
+          "path": "/proxy/bulk-0144",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0145",
+          "method": "GET",
+          "path": "/proxy/bulk-0145",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0146",
+          "method": "GET",
+          "path": "/proxy/bulk-0146",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0147",
+          "method": "GET",
+          "path": "/proxy/bulk-0147",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0148",
+          "method": "GET",
+          "path": "/proxy/bulk-0148",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0149",
+          "method": "GET",
+          "path": "/proxy/bulk-0149",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0150",
+          "method": "GET",
+          "path": "/proxy/bulk-0150",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0151",
+          "method": "GET",
+          "path": "/proxy/bulk-0151",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0152",
+          "method": "GET",
+          "path": "/proxy/bulk-0152",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0153",
+          "method": "GET",
+          "path": "/proxy/bulk-0153",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0154",
+          "method": "GET",
+          "path": "/proxy/bulk-0154",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0155",
+          "method": "GET",
+          "path": "/proxy/bulk-0155",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0156",
+          "method": "GET",
+          "path": "/proxy/bulk-0156",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0157",
+          "method": "GET",
+          "path": "/proxy/bulk-0157",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0158",
+          "method": "GET",
+          "path": "/proxy/bulk-0158",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0159",
+          "method": "GET",
+          "path": "/proxy/bulk-0159",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0160",
+          "method": "GET",
+          "path": "/proxy/bulk-0160",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0161",
+          "method": "GET",
+          "path": "/proxy/bulk-0161",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0162",
+          "method": "GET",
+          "path": "/proxy/bulk-0162",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0163",
+          "method": "GET",
+          "path": "/proxy/bulk-0163",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0164",
+          "method": "GET",
+          "path": "/proxy/bulk-0164",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0165",
+          "method": "GET",
+          "path": "/proxy/bulk-0165",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0166",
+          "method": "GET",
+          "path": "/proxy/bulk-0166",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0167",
+          "method": "GET",
+          "path": "/proxy/bulk-0167",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0168",
+          "method": "GET",
+          "path": "/proxy/bulk-0168",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0169",
+          "method": "GET",
+          "path": "/proxy/bulk-0169",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0170",
+          "method": "GET",
+          "path": "/proxy/bulk-0170",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0171",
+          "method": "GET",
+          "path": "/proxy/bulk-0171",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0172",
+          "method": "GET",
+          "path": "/proxy/bulk-0172",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0173",
+          "method": "GET",
+          "path": "/proxy/bulk-0173",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0174",
+          "method": "GET",
+          "path": "/proxy/bulk-0174",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0175",
+          "method": "GET",
+          "path": "/proxy/bulk-0175",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0176",
+          "method": "GET",
+          "path": "/proxy/bulk-0176",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0177",
+          "method": "GET",
+          "path": "/proxy/bulk-0177",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0178",
+          "method": "GET",
+          "path": "/proxy/bulk-0178",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0179",
+          "method": "GET",
+          "path": "/proxy/bulk-0179",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0180",
+          "method": "GET",
+          "path": "/proxy/bulk-0180",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0181",
+          "method": "GET",
+          "path": "/proxy/bulk-0181",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0182",
+          "method": "GET",
+          "path": "/proxy/bulk-0182",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0183",
+          "method": "GET",
+          "path": "/proxy/bulk-0183",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0184",
+          "method": "GET",
+          "path": "/proxy/bulk-0184",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0185",
+          "method": "GET",
+          "path": "/proxy/bulk-0185",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0186",
+          "method": "GET",
+          "path": "/proxy/bulk-0186",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0187",
+          "method": "GET",
+          "path": "/proxy/bulk-0187",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0188",
+          "method": "GET",
+          "path": "/proxy/bulk-0188",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0189",
+          "method": "GET",
+          "path": "/proxy/bulk-0189",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0190",
+          "method": "GET",
+          "path": "/proxy/bulk-0190",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0191",
+          "method": "GET",
+          "path": "/proxy/bulk-0191",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0192",
+          "method": "GET",
+          "path": "/proxy/bulk-0192",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0193",
+          "method": "GET",
+          "path": "/proxy/bulk-0193",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0194",
+          "method": "GET",
+          "path": "/proxy/bulk-0194",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0195",
+          "method": "GET",
+          "path": "/proxy/bulk-0195",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0196",
+          "method": "GET",
+          "path": "/proxy/bulk-0196",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0197",
+          "method": "GET",
+          "path": "/proxy/bulk-0197",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0198",
+          "method": "GET",
+          "path": "/proxy/bulk-0198",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0199",
+          "method": "GET",
+          "path": "/proxy/bulk-0199",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0200",
+          "method": "GET",
+          "path": "/proxy/bulk-0200",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0201",
+          "method": "GET",
+          "path": "/proxy/bulk-0201",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0202",
+          "method": "GET",
+          "path": "/proxy/bulk-0202",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0203",
+          "method": "GET",
+          "path": "/proxy/bulk-0203",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0204",
+          "method": "GET",
+          "path": "/proxy/bulk-0204",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0205",
+          "method": "GET",
+          "path": "/proxy/bulk-0205",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0206",
+          "method": "GET",
+          "path": "/proxy/bulk-0206",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0207",
+          "method": "GET",
+          "path": "/proxy/bulk-0207",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0208",
+          "method": "GET",
+          "path": "/proxy/bulk-0208",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0209",
+          "method": "GET",
+          "path": "/proxy/bulk-0209",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0210",
+          "method": "GET",
+          "path": "/proxy/bulk-0210",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0211",
+          "method": "GET",
+          "path": "/proxy/bulk-0211",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0212",
+          "method": "GET",
+          "path": "/proxy/bulk-0212",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0213",
+          "method": "GET",
+          "path": "/proxy/bulk-0213",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0214",
+          "method": "GET",
+          "path": "/proxy/bulk-0214",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0215",
+          "method": "GET",
+          "path": "/proxy/bulk-0215",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0216",
+          "method": "GET",
+          "path": "/proxy/bulk-0216",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0217",
+          "method": "GET",
+          "path": "/proxy/bulk-0217",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0218",
+          "method": "GET",
+          "path": "/proxy/bulk-0218",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0219",
+          "method": "GET",
+          "path": "/proxy/bulk-0219",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0220",
+          "method": "GET",
+          "path": "/proxy/bulk-0220",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0221",
+          "method": "GET",
+          "path": "/proxy/bulk-0221",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0222",
+          "method": "GET",
+          "path": "/proxy/bulk-0222",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0223",
+          "method": "GET",
+          "path": "/proxy/bulk-0223",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0224",
+          "method": "GET",
+          "path": "/proxy/bulk-0224",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0225",
+          "method": "GET",
+          "path": "/proxy/bulk-0225",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0226",
+          "method": "GET",
+          "path": "/proxy/bulk-0226",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0227",
+          "method": "GET",
+          "path": "/proxy/bulk-0227",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0228",
+          "method": "GET",
+          "path": "/proxy/bulk-0228",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0229",
+          "method": "GET",
+          "path": "/proxy/bulk-0229",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0230",
+          "method": "GET",
+          "path": "/proxy/bulk-0230",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0231",
+          "method": "GET",
+          "path": "/proxy/bulk-0231",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0232",
+          "method": "GET",
+          "path": "/proxy/bulk-0232",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0233",
+          "method": "GET",
+          "path": "/proxy/bulk-0233",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0234",
+          "method": "GET",
+          "path": "/proxy/bulk-0234",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0235",
+          "method": "GET",
+          "path": "/proxy/bulk-0235",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0236",
+          "method": "GET",
+          "path": "/proxy/bulk-0236",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0237",
+          "method": "GET",
+          "path": "/proxy/bulk-0237",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0238",
+          "method": "GET",
+          "path": "/proxy/bulk-0238",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0239",
+          "method": "GET",
+          "path": "/proxy/bulk-0239",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0240",
+          "method": "GET",
+          "path": "/proxy/bulk-0240",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0241",
+          "method": "GET",
+          "path": "/proxy/bulk-0241",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0242",
+          "method": "GET",
+          "path": "/proxy/bulk-0242",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0243",
+          "method": "GET",
+          "path": "/proxy/bulk-0243",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0244",
+          "method": "GET",
+          "path": "/proxy/bulk-0244",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0245",
+          "method": "GET",
+          "path": "/proxy/bulk-0245",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0246",
+          "method": "GET",
+          "path": "/proxy/bulk-0246",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0247",
+          "method": "GET",
+          "path": "/proxy/bulk-0247",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0248",
+          "method": "GET",
+          "path": "/proxy/bulk-0248",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0249",
+          "method": "GET",
+          "path": "/proxy/bulk-0249",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0250",
+          "method": "GET",
+          "path": "/proxy/bulk-0250",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0251",
+          "method": "GET",
+          "path": "/proxy/bulk-0251",
+          "initial": {
+            "timeoutMs": 1000,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0252",
+          "method": "GET",
+          "path": "/proxy/bulk-0252",
+          "initial": {
+            "timeoutMs": 1010,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0253",
+          "method": "GET",
+          "path": "/proxy/bulk-0253",
+          "initial": {
+            "timeoutMs": 1020,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0254",
+          "method": "GET",
+          "path": "/proxy/bulk-0254",
+          "initial": {
+            "timeoutMs": 1030,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0255",
+          "method": "GET",
+          "path": "/proxy/bulk-0255",
+          "initial": {
+            "timeoutMs": 1040,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0256",
+          "method": "GET",
+          "path": "/proxy/bulk-0256",
+          "initial": {
+            "timeoutMs": 1050,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0257",
+          "method": "GET",
+          "path": "/proxy/bulk-0257",
+          "initial": {
+            "timeoutMs": 1060,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0258",
+          "method": "GET",
+          "path": "/proxy/bulk-0258",
+          "initial": {
+            "timeoutMs": 1070,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0259",
+          "method": "GET",
+          "path": "/proxy/bulk-0259",
+          "initial": {
+            "timeoutMs": 1080,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0260",
+          "method": "GET",
+          "path": "/proxy/bulk-0260",
+          "initial": {
+            "timeoutMs": 1090,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0261",
+          "method": "GET",
+          "path": "/proxy/bulk-0261",
+          "initial": {
+            "timeoutMs": 1100,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0262",
+          "method": "GET",
+          "path": "/proxy/bulk-0262",
+          "initial": {
+            "timeoutMs": 1110,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0263",
+          "method": "GET",
+          "path": "/proxy/bulk-0263",
+          "initial": {
+            "timeoutMs": 1120,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0264",
+          "method": "GET",
+          "path": "/proxy/bulk-0264",
+          "initial": {
+            "timeoutMs": 1130,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0265",
+          "method": "GET",
+          "path": "/proxy/bulk-0265",
+          "initial": {
+            "timeoutMs": 1140,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0266",
+          "method": "GET",
+          "path": "/proxy/bulk-0266",
+          "initial": {
+            "timeoutMs": 1150,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0267",
+          "method": "GET",
+          "path": "/proxy/bulk-0267",
+          "initial": {
+            "timeoutMs": 1160,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0268",
+          "method": "GET",
+          "path": "/proxy/bulk-0268",
+          "initial": {
+            "timeoutMs": 1170,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0269",
+          "method": "GET",
+          "path": "/proxy/bulk-0269",
+          "initial": {
+            "timeoutMs": 1180,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0270",
+          "method": "GET",
+          "path": "/proxy/bulk-0270",
+          "initial": {
+            "timeoutMs": 1190,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0271",
+          "method": "GET",
+          "path": "/proxy/bulk-0271",
+          "initial": {
+            "timeoutMs": 1200,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0272",
+          "method": "GET",
+          "path": "/proxy/bulk-0272",
+          "initial": {
+            "timeoutMs": 1210,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0273",
+          "method": "GET",
+          "path": "/proxy/bulk-0273",
+          "initial": {
+            "timeoutMs": 1220,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0274",
+          "method": "GET",
+          "path": "/proxy/bulk-0274",
+          "initial": {
+            "timeoutMs": 1230,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0275",
+          "method": "GET",
+          "path": "/proxy/bulk-0275",
+          "initial": {
+            "timeoutMs": 1240,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0276",
+          "method": "GET",
+          "path": "/proxy/bulk-0276",
+          "initial": {
+            "timeoutMs": 1250,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0277",
+          "method": "GET",
+          "path": "/proxy/bulk-0277",
+          "initial": {
+            "timeoutMs": 1260,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0278",
+          "method": "GET",
+          "path": "/proxy/bulk-0278",
+          "initial": {
+            "timeoutMs": 1270,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0279",
+          "method": "GET",
+          "path": "/proxy/bulk-0279",
+          "initial": {
+            "timeoutMs": 1280,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0280",
+          "method": "GET",
+          "path": "/proxy/bulk-0280",
+          "initial": {
+            "timeoutMs": 1290,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0281",
+          "method": "GET",
+          "path": "/proxy/bulk-0281",
+          "initial": {
+            "timeoutMs": 1300,
+            "rateLimitPerMinute": 100
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0282",
+          "method": "GET",
+          "path": "/proxy/bulk-0282",
+          "initial": {
+            "timeoutMs": 1310,
+            "rateLimitPerMinute": 101
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0283",
+          "method": "GET",
+          "path": "/proxy/bulk-0283",
+          "initial": {
+            "timeoutMs": 1320,
+            "rateLimitPerMinute": 102
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0284",
+          "method": "GET",
+          "path": "/proxy/bulk-0284",
+          "initial": {
+            "timeoutMs": 1330,
+            "rateLimitPerMinute": 103
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0285",
+          "method": "GET",
+          "path": "/proxy/bulk-0285",
+          "initial": {
+            "timeoutMs": 1340,
+            "rateLimitPerMinute": 104
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0286",
+          "method": "GET",
+          "path": "/proxy/bulk-0286",
+          "initial": {
+            "timeoutMs": 1350,
+            "rateLimitPerMinute": 105
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0287",
+          "method": "GET",
+          "path": "/proxy/bulk-0287",
+          "initial": {
+            "timeoutMs": 1360,
+            "rateLimitPerMinute": 106
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0288",
+          "method": "GET",
+          "path": "/proxy/bulk-0288",
+          "initial": {
+            "timeoutMs": 1370,
+            "rateLimitPerMinute": 107
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0289",
+          "method": "GET",
+          "path": "/proxy/bulk-0289",
+          "initial": {
+            "timeoutMs": 1380,
+            "rateLimitPerMinute": 108
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0290",
+          "method": "GET",
+          "path": "/proxy/bulk-0290",
+          "initial": {
+            "timeoutMs": 1390,
+            "rateLimitPerMinute": 109
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0291",
+          "method": "GET",
+          "path": "/proxy/bulk-0291",
+          "initial": {
+            "timeoutMs": 1400,
+            "rateLimitPerMinute": 110
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0292",
+          "method": "GET",
+          "path": "/proxy/bulk-0292",
+          "initial": {
+            "timeoutMs": 1410,
+            "rateLimitPerMinute": 111
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0293",
+          "method": "GET",
+          "path": "/proxy/bulk-0293",
+          "initial": {
+            "timeoutMs": 1420,
+            "rateLimitPerMinute": 112
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0294",
+          "method": "GET",
+          "path": "/proxy/bulk-0294",
+          "initial": {
+            "timeoutMs": 1430,
+            "rateLimitPerMinute": 113
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0295",
+          "method": "GET",
+          "path": "/proxy/bulk-0295",
+          "initial": {
+            "timeoutMs": 1440,
+            "rateLimitPerMinute": 114
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0296",
+          "method": "GET",
+          "path": "/proxy/bulk-0296",
+          "initial": {
+            "timeoutMs": 1450,
+            "rateLimitPerMinute": 115
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0297",
+          "method": "GET",
+          "path": "/proxy/bulk-0297",
+          "initial": {
+            "timeoutMs": 1460,
+            "rateLimitPerMinute": 116
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0298",
+          "method": "GET",
+          "path": "/proxy/bulk-0298",
+          "initial": {
+            "timeoutMs": 1470,
+            "rateLimitPerMinute": 117
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0299",
+          "method": "GET",
+          "path": "/proxy/bulk-0299",
+          "initial": {
+            "timeoutMs": 1480,
+            "rateLimitPerMinute": 118
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
+        },
+        {
+          "id": "bulk-0300",
+          "method": "GET",
+          "path": "/proxy/bulk-0300",
+          "initial": {
+            "timeoutMs": 1490,
+            "rateLimitPerMinute": 119
+          },
+          "upstream": {
+            "latencyMs": 3,
+            "status": 200,
+            "body": "bulk"
+          }
         }
       ]
     }

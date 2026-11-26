@@ -10,12 +10,22 @@ import {
 } from '../shared/validation.js';
 import type {
   CoordinatorPersistentState,
+  DispatchChunkPlan,
   ReleaseRecord,
   RevokeDispatchState,
   ServiceDispatchState,
   ServiceEndpoint,
   FixtureData,
 } from '../shared/types.js';
+import {
+  DEFAULT_DISPATCH_MAX_BYTES,
+  buildAcceptChunkBody,
+  chunkAcceptRequestPath,
+  chunkIdempotencyKey,
+  computeDispatchPlan,
+  planChunkChanges,
+  type ChunkPrefix,
+} from '../shared/chunking.js';
 
 export interface CoordinatorOptions {
   dataDir: string;
@@ -24,6 +34,8 @@ export interface CoordinatorOptions {
   requestTimeoutMs?: number;
   retryDelayMs?: number;
   reconcileIntervalMs?: number;
+  /** Maximum bytes of any single dispatch request body. */
+  dispatchMaxBytes?: number;
 }
 
 export interface CreateReleaseInput {
@@ -32,6 +44,15 @@ export interface CreateReleaseInput {
   targetServiceIds?: unknown;
   batches?: unknown;
   batchSize?: unknown;
+  dispatchMaxBytes?: unknown;
+}
+
+interface ServiceReleaseStatus {
+  status: 'active' | 'revoked' | 'pending' | 'absent';
+  receivedChunks: number[];
+  missingChunks: number[];
+  chunkCount: number | null;
+  serviceAcceptedAt?: string;
 }
 
 export class Coordinator {
@@ -41,6 +62,7 @@ export class Coordinator {
   private reconcileTimer: NodeJS.Timeout | undefined;
   private readonly requestTimeoutMs: number;
   private readonly retryDelayMs: number;
+  readonly defaultDispatchMaxBytes: number;
 
   constructor(private readonly options: CoordinatorOptions) {
     this.store = new AtomicJsonStore<CoordinatorPersistentState>(
@@ -49,6 +71,10 @@ export class Coordinator {
     for (const endpoint of options.endpoints) this.endpoints.set(endpoint.id, endpoint);
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1200;
     this.retryDelayMs = options.retryDelayMs ?? 180;
+    this.defaultDispatchMaxBytes = options.dispatchMaxBytes ?? DEFAULT_DISPATCH_MAX_BYTES;
+    if (!Number.isInteger(this.defaultDispatchMaxBytes) || this.defaultDispatchMaxBytes < 1) {
+      throw new Error(`dispatchMaxBytes must be a positive integer, got ${String(options.dispatchMaxBytes)}`);
+    }
   }
 
   async start(): Promise<void> {
@@ -118,6 +144,15 @@ export class Coordinator {
     else if (release.status === 'running' || release.status === 'pausing') await this.runRolloutLoop(id);
   }
 
+  private parseDispatchMaxBytes(input: unknown): number {
+    if (input === undefined || input === null) return this.defaultDispatchMaxBytes;
+    const value = typeof input === 'string' ? Number(input) : (input as number);
+    if (!Number.isInteger(value) || value < 1) {
+      throw new ApiError(400, 'dispatchMaxBytes must be a positive integer');
+    }
+    return value;
+  }
+
   async createRelease(input: CreateReleaseInput): Promise<ReleaseRecord> {
     const changes = normalizeChanges(input.changes, this.options.fixture);
     const targetServiceIds = deriveTargetServiceIds(changes, input.targetServiceIds);
@@ -129,6 +164,8 @@ export class Coordinator {
       throw new ApiError(400, 'releaseId may contain only letters, numbers, dot, underscore and dash');
     }
 
+    const dispatchMaxBytes = this.parseDispatchMaxBytes(input.dispatchMaxBytes);
+
     const record = await this.store.mutate((draft) => {
       if (requestedId && draft.releases[requestedId]) {
         throw new ApiError(409, `release already exists: ${requestedId}`);
@@ -136,15 +173,19 @@ export class Coordinator {
       draft.acceptedOrder += 1;
       const id = requestedId || `rel-${draft.acceptedOrder}-${randomUUID().slice(0, 8)}`;
       const timestamp = nowIso();
+      const prefix: ChunkPrefix = { releaseId: id, coordinatorAcceptedAt: timestamp, acceptedOrder: draft.acceptedOrder };
       const services: Record<string, ServiceDispatchState> = {};
       targetServiceIds.forEach((serviceId) => {
         const batchIndex = batches.findIndex((batch) => batch.includes(serviceId));
+        const plan = computeDispatchPlan(prefix, changes.filter((c) => c.serviceId === serviceId), dispatchMaxBytes);
         services[serviceId] = {
           serviceId,
           batchIndex,
           status: 'pending',
-          idempotencyKey: `accept:${id}:${serviceId}:v1`,
+          idempotencyKey: chunkIdempotencyKey(id, serviceId, 0),
           attempts: 0,
+          chunkPlan: plan,
+          chunksSent: [],
         };
       });
 
@@ -158,6 +199,7 @@ export class Coordinator {
         batches,
         currentBatchIndex: 0,
         pauseRequested: false,
+        dispatchMaxBytes,
         createdAt: timestamp,
         updatedAt: timestamp,
         services,
@@ -165,7 +207,9 @@ export class Coordinator {
           {
             at: timestamp,
             type: 'accepted',
-            message: `Coordinator accepted release with ${changes.length} change(s), ${batches.length} batch(es)`,
+            message:
+              `Coordinator accepted release with ${changes.length} change(s), ${batches.length} batch(es), ` +
+              `max dispatch body ${dispatchMaxBytes} bytes`,
           },
         ],
       };
@@ -328,18 +372,78 @@ export class Coordinator {
     });
   }
 
+  private dispatchMaxBytesFor(release: ReleaseRecord): number {
+    return release.dispatchMaxBytes ?? this.defaultDispatchMaxBytes;
+  }
+
+  private chunkPlanFor(release: ReleaseRecord, serviceId: string): DispatchChunkPlan {
+    const existing = release.services[serviceId]?.chunkPlan;
+    if (existing) return existing;
+    return computeDispatchPlan(
+      { releaseId: release.id, coordinatorAcceptedAt: release.coordinatorAcceptedAt, acceptedOrder: release.acceptedOrder },
+      this.changesForService(release, serviceId),
+      this.dispatchMaxBytesFor(release),
+    );
+  }
+
+  /**
+   * Sends only the chunks this service has not positively reported as
+   * persisted. Retries a 503/202-free chunk set are safe because each chunk
+   * has its own stable idempotency key.
+   */
   async attemptAccept(id: string, serviceId: string): Promise<void> {
     const before = this.store.get().releases[id];
     const dispatch = before?.services[serviceId];
     if (!before || !dispatch || dispatch.status === 'accepted') return;
     const baseUrl = this.endpoint(serviceId).baseUrl;
-    const changes = this.changesForService(before, serviceId);
-    const body = JSON.stringify({
+    const serviceChanges = this.changesForService(before, serviceId);
+    const plan = this.chunkPlanFor(before, serviceId);
+    const maxBytes = this.dispatchMaxBytesFor(before);
+    const prefix: ChunkPrefix = {
       releaseId: id,
       coordinatorAcceptedAt: before.coordinatorAcceptedAt,
       acceptedOrder: before.acceptedOrder,
-      changes,
-    });
+    };
+
+    if (!before.services[serviceId]?.chunkPlan) {
+      // Legacy release created before chunking existed: persist the plan so
+      // future retries use exactly the same boundaries.
+      await this.store.mutate((draft) => {
+        const serviceState = draft.releases[id]?.services[serviceId];
+        if (serviceState && !serviceState.chunkPlan) serviceState.chunkPlan = plan;
+        return { next: draft, result: undefined };
+      });
+    }
+
+    if (plan.total === 0) {
+      await this.markAccepted(id, serviceId, undefined);
+      return;
+    }
+
+    const confirmed = await this.fetchServiceReleaseStatus(id, serviceId);
+    if (confirmed?.status === 'active') {
+      await this.markAccepted(id, serviceId, confirmed.serviceAcceptedAt);
+      return;
+    }
+    if (confirmed?.status === 'revoked') {
+      // A revoked release cannot be resurrected; surface it instead of
+      // silently retrying forever.
+      await this.recordAcceptError(id, serviceId, new Error('service reports this release as revoked'));
+      return;
+    }
+
+    const sent = new Set(confirmed && confirmed.status === 'pending' ? confirmed.receivedChunks : []);
+    if (!confirmed) {
+      for (const chunkIndex of dispatch.chunksSent ?? []) sent.add(chunkIndex);
+    } else if (confirmed.status === 'pending' && confirmed.receivedChunks.length > 0) {
+      await this.markChunksSent(id, serviceId, confirmed.receivedChunks);
+    }
+    // A service that already holds the whole group but has not applied it is
+    // waiting for its final chunk: it needs a single (idempotent) resend, not
+    // a zero-chunk dispatch that would wait forever.
+    if (sent.size >= plan.total && confirmed?.status === 'pending') {
+      sent.delete(plan.total - 1);
+    }
 
     await this.store.mutate((draft) => {
       const serviceState = draft.releases[id]?.services[serviceId];
@@ -347,36 +451,144 @@ export class Coordinator {
         serviceState.status = 'dispatched';
         serviceState.attempts += 1;
         serviceState.lastAttemptAt = nowIso();
-        serviceState.requestBytes = Buffer.byteLength(body);
       }
       return { next: draft, result: undefined };
     });
 
-    try {
-      const response = await fetchJson(
-        `${baseUrl}/__admin/releases/${encodeURIComponent(id)}/accept`,
-        {
+    let lastError: unknown;
+    for (let index = 0; index < plan.total; index += 1) {
+      if (sent.has(index)) continue;
+      const chunkChanges = planChunkChanges(plan, serviceChanges, index);
+      const body = buildAcceptChunkBody(prefix, plan.total, index, chunkChanges);
+      const requestBytes = Buffer.byteLength(body);
+      if (requestBytes > maxBytes) {
+        lastError = new Error(
+          `planned chunk ${index} is ${requestBytes} bytes, above the ${maxBytes}-byte dispatch limit`,
+        );
+        break;
+      }
+
+      try {
+        const response = await fetchJson(`${baseUrl}${chunkAcceptRequestPath(id, index)}`, {
           method: 'POST',
           body,
           timeoutMs: this.requestTimeoutMs,
           headers: {
             'content-type': 'application/json',
-            'idempotency-key': dispatch.idempotencyKey,
+            'idempotency-key': chunkIdempotencyKey(id, serviceId, index),
           },
-        },
-      );
-      if (response.status === 200 && response.body?.status === 'active') {
-        await this.markAccepted(id, serviceId, response.body.serviceAcceptedAt);
-        return;
+        });
+
+        if (response.status === 200 && response.body?.status === 'active') {
+          await this.markAccepted(id, serviceId, response.body.serviceAcceptedAt, requestBytes);
+          return;
+        }
+        if (
+          (response.status === 202 || response.status === 200) &&
+          response.body?.status === 'pending'
+        ) {
+          await this.markChunkSent(id, serviceId, index, requestBytes);
+          sent.add(index);
+          continue;
+        }
+        if (response.status === 409 && response.body?.status === 'revoked') {
+          await this.recordAcceptError(id, serviceId, new Error('service reports this release as revoked'));
+          return;
+        }
+        throw new Error(`chunk ${index} accept failed with HTTP ${response.status}: ${response.text.slice(0, 300)}`);
+      } catch (error) {
+        lastError = error;
+        // Ask the service what it actually persisted instead of guessing.
+        const reconciled = await this.fetchServiceReleaseStatus(id, serviceId);
+        if (reconciled?.status === 'active') {
+          await this.markAccepted(id, serviceId, reconciled.serviceAcceptedAt);
+          return;
+        }
+        if (reconciled?.status === 'pending') {
+          const received = reconciled.receivedChunks.filter((value) => value >= 0 && value < plan.total);
+          for (const chunkIndex of received) sent.add(chunkIndex);
+          await this.markChunksSent(id, serviceId, received);
+          if (received.includes(index)) continue;
+          // The chunk was not persisted; leave the rest for the next attempt
+          // rather than hammering an unresponsive service.
+          break;
+        }
+        await this.recordAcceptError(id, serviceId, error);
+        break;
       }
-      throw new Error(`accept failed with HTTP ${response.status}: ${response.text.slice(0, 300)}`);
-    } catch (error) {
-      const reconciled = await this.reconcileServiceAccept(id, serviceId).catch(() => false);
-      if (!reconciled) await this.recordAcceptError(id, serviceId, error);
+    }
+
+    if (lastError) {
+      const serviceState = this.store.get().releases[id]?.services[serviceId];
+      if (serviceState?.status !== 'accepted') {
+        await this.recordAcceptError(id, serviceId, lastError);
+      }
+      return;
+    }
+
+    // All chunks were acknowledged but the service only confirmed the whole
+    // group on its last chunk; verify once more in case that reply was lost.
+    const finalStatus = await this.fetchServiceReleaseStatus(id, serviceId);
+    if (finalStatus?.status === 'active') {
+      await this.markAccepted(id, serviceId, finalStatus.serviceAcceptedAt);
     }
   }
 
-  private async markAccepted(id: string, serviceId: string, serviceAcceptedAt?: string): Promise<void> {
+  private async markChunkSent(id: string, serviceId: string, index: number, requestBytes: number): Promise<void> {
+    await this.markChunksSent(id, serviceId, [index], requestBytes);
+  }
+
+  private async markChunksSent(
+    id: string,
+    serviceId: string,
+    indexes: number[],
+    requestBytes?: number,
+  ): Promise<void> {
+    await this.store.mutate((draft) => {
+      const serviceState = draft.releases[id]?.services[serviceId];
+      if (serviceState && serviceState.status !== 'accepted') {
+        const set = new Set(serviceState.chunksSent ?? []);
+        for (const index of indexes) set.add(index);
+        serviceState.chunksSent = [...set].sort((a, b) => a - b);
+        if (requestBytes !== undefined) serviceState.requestBytes = Math.max(serviceState.requestBytes ?? 0, requestBytes);
+        serviceState.lastError = undefined;
+      }
+      return { next: draft, result: undefined };
+    });
+  }
+
+  private async fetchServiceReleaseStatus(
+    id: string,
+    serviceId: string,
+  ): Promise<ServiceReleaseStatus | null> {
+    const endpoint = this.endpoint(serviceId);
+    try {
+      const response = await fetchJson(
+        `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}`,
+        { method: 'GET', timeoutMs: this.requestTimeoutMs },
+      );
+      if (response.status === 404) {
+        return { status: 'absent', receivedChunks: [], missingChunks: [], chunkCount: null };
+      }
+      if (response.status !== 200 || !response.body) return null;
+      return {
+        status: response.body.status,
+        receivedChunks: Array.isArray(response.body.receivedChunks) ? response.body.receivedChunks : [],
+        missingChunks: Array.isArray(response.body.missingChunks) ? response.body.missingChunks : [],
+        chunkCount: typeof response.body.chunkCount === 'number' ? response.body.chunkCount : null,
+        serviceAcceptedAt: response.body.serviceAcceptedAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async markAccepted(
+    id: string,
+    serviceId: string,
+    serviceAcceptedAt?: string,
+    requestBytes?: number,
+  ): Promise<void> {
     await this.store.mutate((draft) => {
       const serviceState = draft.releases[id]?.services[serviceId];
       if (serviceState && serviceState.status !== 'accepted') {
@@ -384,6 +596,8 @@ export class Coordinator {
         serviceState.serviceAcceptedAt = serviceAcceptedAt;
         serviceState.coordinatorConfirmedAt = nowIso();
         serviceState.lastError = undefined;
+        if (requestBytes !== undefined) serviceState.requestBytes = Math.max(serviceState.requestBytes ?? 0, requestBytes);
+        serviceState.chunksSent = Array.from({ length: serviceState.chunkPlan?.total ?? 0 }, (_, index) => index);
       }
       return { next: draft, result: undefined };
     });
@@ -399,21 +613,26 @@ export class Coordinator {
     });
   }
 
-  async reconcileServiceAccept(id: string, serviceId: string): Promise<boolean> {
-    const endpoint = this.endpoint(serviceId);
-    try {
-      const response = await fetchJson(
-        `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}`,
-        { method: 'GET', timeoutMs: this.requestTimeoutMs },
-      );
-      if (response.status === 200 && response.body?.status === 'active') {
-        await this.markAccepted(id, serviceId, response.body.serviceAcceptedAt);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
+  async reconcileServiceAccept(
+    id: string,
+    serviceId: string,
+    expectedChunk?: number,
+    expectedCount?: number,
+  ): Promise<ServiceReleaseStatus> {
+    const status = await this.fetchServiceReleaseStatus(id, serviceId);
+    if (!status) return { status: 'absent', receivedChunks: [], missingChunks: [], chunkCount: null };
+    if (status.status === 'active') {
+      await this.markAccepted(id, serviceId, status.serviceAcceptedAt);
+      return status;
     }
+    if (status.status === 'pending') {
+      const set = new Set(status.receivedChunks);
+      if (expectedChunk !== undefined) set.add(expectedChunk);
+      const received = [...set].sort((a, b) => a - b);
+      await this.markChunksSent(id, serviceId, received);
+      return { ...status, receivedChunks: received };
+    }
+    return status;
   }
 
   private async runRevocationLoop(id: string): Promise<void> {
@@ -572,8 +791,8 @@ export class Coordinator {
           batch
             .filter((serviceId) => release.services[serviceId]?.status !== 'accepted')
             .map(async (serviceId) => {
-              const accepted = await this.reconcileServiceAccept(release.id, serviceId);
-              if (accepted) this.ensureLoop(release.id);
+              const status = await this.reconcileServiceAccept(release.id, serviceId);
+              if (status.status === 'active' || status.status === 'pending') this.ensureLoop(release.id);
             }),
         );
         this.ensureLoop(release.id);
