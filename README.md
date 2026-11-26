@@ -17,7 +17,7 @@ npm install
 npm test
 ```
 
-`npm test` 会先执行 TypeScript 构建，然后启动真实的协调器、3 个服务子进程和混沌代理，运行 13 项端到端检查并输出中文可读结果。当前环境完整命令约 6–10 秒，远低于 80 秒。
+`npm test` 会先执行 TypeScript 构建，然后启动真实的协调器、3 个服务子进程和混沌代理，运行 18 项端到端检查并输出中文可读结果。当前环境完整命令约 6–10 秒，远低于 80 秒。
 
 单独做类型检查/构建：
 
@@ -319,7 +319,7 @@ curl -s http://127.0.0.1:4400/state | jq
 - `routes[routeId].initial`：该服务自己的初始值。
 - `routes[routeId].effective`：当前物化生效值，读取单路由时直接取，复杂度 O(1)，不扫描发布历史。
 - `candidates[routeId][configKey]`：该配置项的已接纳候选，按 `coordinatorAcceptedAt + acceptedOrder` 新旧排序。
-- `releases[releaseId]`：本服务已接纳或已撤销的整组修改。
+- `releases[releaseId]`：本服务已接纳或已撤销的整组修改，并记录载荷指纹与首次 accept 响应。
 
 取值规则：
 
@@ -352,6 +352,45 @@ revoke:<releaseId>:<serviceId>:v1
 
 服务把首次响应和状态在同一原子文件事务中保存。重送相同键直接返回首次响应，并带 `x-idempotent-replay: true`，不会重复加入候选。即使原 accept 成功应答丢失、之后该发布又被撤销，重放旧 accept 键也只返回旧响应，不会让已撤销发布复活。
 
+同一 `releaseId` 的载荷由 `coordinatorAcceptedAt + acceptedOrder + changes` 规范化后取 SHA-256 指纹：
+
+- 指纹不同（无论幂等键是否相同）返回 `409`，`conflict: "payload-mismatch"`，不接纳、不叠加候选。
+- 指纹相同、幂等键不同视为**合法重送**：返回首次 accept 结果（带 replay 标记），同样不重复加入候选。
+- 同一发布在撤销后再收到同载荷 accept，仍返回 `409`，不允许复活。
+
+### 操作员修复
+
+服务提供按发布整组修正状态的能力：
+
+```text
+GET  /__admin/releases/:id/consistency   # 一致性诊断（多余/重复/缺失/不匹配候选、物化值是否陈旧）
+POST /__admin/releases/:id/repair        # { targetStatus: "active" | "revoked", ...payload }
+```
+
+- `targetStatus: "active"`：以协调器原始 `changes` 整组重建该发布的贡献，移除多余项与重复项，重算物化 `effective`。
+- `targetStatus: "revoked"`：清空该发布的全部残留候选，保持 `revoked` 状态，不因修复而复活。
+- 整组修正在一次状态替换中完成，读方只会看到完整的修正后快照；每个配置项仍按协调器受理顺序决出赢家。
+- 修复同时保留首次 accept 响应，因此之后的合法重送仍返回首次结果。
+
+协调器提供：
+
+```text
+POST /api/releases/:id/repair   # 修复该发布的所有已派发服务
+POST /api/reconcile             # 先按服务现态对账，再修复全部发布
+```
+
+- 只修复曾经派发过的服务（`accepted`、`dispatched` 或有过尝试）；从未派发的批次保持原状。
+- 撤销中/已撤销的发布一律向 `revoked` 修复，修复不会让已撤销发布重新生效。
+- 若修复回执丢失但写入已生效，协调器读取服务 `consistency` 现态确认，并在修复记录中标记 `confirmedViaState: true`。
+- 只要仍有错误贡献（或现态不一致），修复结果就是失败：协调器接口返回 `409` 且 `repaired: false`，绝不报成功。
+
+CLI：
+
+```bash
+npm run op -- repair demo-timeout
+npm run op -- reconcile        # 修复全部发布
+```
+
 ### 对账
 
 协调器周期性以及在重启时：
@@ -377,6 +416,7 @@ POST /api/releases/:id/pause
 POST /api/releases/:id/resume
 POST /api/releases/:id/revoke
 POST /api/releases/:id/reconcile
+POST /api/releases/:id/repair
 POST /api/reconcile
 GET  /api/dashboard
 GET  /api/services/:serviceId/actual-config
@@ -389,9 +429,11 @@ GET  /health
 GET  /__admin/config
 GET  /__admin/config/:routeId
 GET  /__admin/releases/:releaseId
+GET  /__admin/releases/:releaseId/consistency
 GET  /__admin/state
 POST /__admin/releases/:releaseId/accept
 POST /__admin/releases/:releaseId/revoke
+POST /__admin/releases/:releaseId/repair
 POST /__admin/reset-rate-limits
 GET  /proxy/:routeId[/...]
 GET  /__upstream/:routeId

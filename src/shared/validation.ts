@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   ConfigKey,
   FixtureData,
@@ -7,6 +8,40 @@ import type {
 } from './types.js';
 
 export const CONFIG_KEYS: ConfigKey[] = ['timeoutMs', 'rateLimitPerMinute'];
+
+function canonicalChange(change: RouteChange): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    serviceId: change.serviceId,
+    routeId: change.routeId,
+  };
+  for (const key of CONFIG_KEYS) {
+    if (change[key] !== undefined) result[key] = change[key];
+  }
+  return result;
+}
+
+/** Order-independent, whitespace-free form used to compare release payloads. */
+export function canonicalizeChanges(changes: RouteChange[]): Array<Record<string, unknown>> {
+  return changes
+    .map(canonicalChange)
+    .sort((a, b) => `${String(a.serviceId)}/${String(a.routeId)}`.localeCompare(`${String(b.serviceId)}/${String(b.routeId)}`));
+}
+
+export interface AcceptPayloadIdentity {
+  coordinatorAcceptedAt: string;
+  acceptedOrder: number;
+  changes: RouteChange[];
+}
+
+/** Stable fingerprint of the coordinator payload that created a release. */
+export function computeAcceptPayloadHash(input: AcceptPayloadIdentity): string {
+  const canonical = JSON.stringify({
+    coordinatorAcceptedAt: input.coordinatorAcceptedAt,
+    acceptedOrder: input.acceptedOrder,
+    changes: canonicalizeChanges(input.changes),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
 
 export function isConfigKey(value: string): value is ConfigKey {
   return value === 'timeoutMs' || value === 'rateLimitPerMinute';

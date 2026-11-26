@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -155,6 +155,23 @@ function hasAnyReleaseRequest(serviceId: string, releaseId: string): boolean {
   return cluster!
     .getService(serviceId)
     .proxy.requests.some((record) => record.path.includes(`/releases/${releaseId}`));
+}
+
+/**
+ * Directly tampers with a service's persisted file to recreate the historical
+ * damage of a conflicting resend, then restarts the process so the state is
+ * reloaded from disk.
+ */
+async function corruptServiceState(
+  serviceId: string,
+  _releaseId: string,
+  mutate: (state: ServicePersistentState) => void,
+): Promise<void> {
+  const stateFile = path.join(cluster!.dataDir, 'services', `${serviceId}.json`);
+  const state = JSON.parse(await readFile(stateFile, 'utf8')) as ServicePersistentState;
+  mutate(state);
+  await writeFile(stateFile, JSON.stringify(state, null, 2));
+  await cluster!.restartService(serviceId);
 }
 
 async function main(): Promise<void> {
@@ -451,6 +468,199 @@ async function main(): Promise<void> {
     assert.equal(config.body.effective.timeoutMs, 700);
   });
 
+  await check('同发布 ID 的不同载荷被拒绝；合法重送仍返回首次结果且不叠加候选', async () => {
+    const url = cluster!.getService('checkout').directUrl;
+    const acceptedAt = new Date().toISOString();
+    const firstBody = JSON.stringify({
+      coordinatorAcceptedAt: acceptedAt,
+      acceptedOrder: 999_010,
+      changes: [
+        { serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 1500 },
+        { serviceId: 'checkout', routeId: 'atomic-b', timeoutMs: 1600 },
+      ],
+    });
+    const first = await fetch(`${url}/__admin/releases/rel-payload-conflict/accept`, {
+      method: 'POST',
+      body: firstBody,
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-payload-1' },
+    });
+    assert.equal(first.status, 200);
+    const firstJson = await first.clone().json();
+
+    // Same idempotency key, different payload -> refuse.
+    const sameKeyDifferent = await fetch(`${url}/__admin/releases/rel-payload-conflict/accept`, {
+      method: 'POST',
+      body: JSON.stringify({
+        coordinatorAcceptedAt: acceptedAt,
+        acceptedOrder: 999_010,
+        changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 1 }],
+      }),
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-payload-1' },
+    });
+    assert.equal(sameKeyDifferent.status, 409);
+    assert.equal(((await sameKeyDifferent.json()) as any).conflict, 'payload-mismatch');
+
+    // Different key, different payload -> refuse as well.
+    const differentKeyDifferent = await fetch(`${url}/__admin/releases/rel-payload-conflict/accept`, {
+      method: 'POST',
+      body: JSON.stringify({
+        coordinatorAcceptedAt: new Date(Date.parse(acceptedAt) + 5).toISOString(),
+        acceptedOrder: 999_011,
+        changes: [{ serviceId: 'checkout', routeId: 'atomic-a', timeoutMs: 2 }],
+      }),
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-payload-2' },
+    });
+    assert.equal(differentKeyDifferent.status, 409);
+    assert.equal(((await differentKeyDifferent.json()) as any).conflict, 'payload-mismatch');
+
+    // Same payload, different key -> first result, marked as a replay, no extra candidate.
+    const resend = await fetch(`${url}/__admin/releases/rel-payload-conflict/accept`, {
+      method: 'POST',
+      body: firstBody,
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-payload-3' },
+    });
+    assert.equal(resend.status, 200);
+    assert.equal(resend.headers.get('x-idempotent-replay'), 'true');
+    assert.deepEqual(await resend.json(), firstJson);
+
+    const config = await directFetch('checkout', '/__admin/config/atomic-a');
+    assert.equal(config.body.effective.timeoutMs, 1500, '冲突载荷不应改变取值');
+    const consistency = await directFetch('checkout', '/__admin/releases/rel-payload-conflict/consistency');
+    assert.equal(consistency.body.consistency.consistent, true, JSON.stringify(consistency.body.consistency));
+    const candidates = consistency.body.routes['atomic-a'].candidates.timeoutMs as Array<{ releaseId: string; value: number }>;
+    assert.equal(candidates.filter((item) => item.releaseId === 'rel-payload-conflict').length, 1);
+    assert.equal(candidates.find((item) => item.releaseId === 'rel-payload-conflict')?.value, 1500);
+
+    // Clean up so this release no longer hides later assertions.
+    const cleanup = await fetch(`${url}/__admin/releases/rel-payload-conflict/revoke`, {
+      method: 'POST',
+      body: '{}',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-payload-cleanup' },
+    });
+    assert.equal(cleanup.status, 200);
+  });
+
+  await check('协调器整组修复：清除多余项、补齐缺失项并保持撤销，未派发批次不动', async () => {
+    const url = cluster!.getService('checkout').directUrl;
+    const acceptedAt = new Date().toISOString();
+    const accept = await fetch(`${url}/__admin/releases/rel-repair-group/accept`, {
+      method: 'POST',
+      body: JSON.stringify({
+        coordinatorAcceptedAt: acceptedAt,
+        acceptedOrder: 999_020,
+        changes: [
+          { serviceId: 'checkout', routeId: 'repair-gamma', timeoutMs: 1700 },
+          { serviceId: 'checkout', routeId: 'repair-delta', timeoutMs: 1800 },
+        ],
+      }),
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-group' },
+    });
+    assert.equal(accept.status, 200);
+
+    // Simulate the historical damage of a conflicting resend: an extra
+    // candidate on an untouched route plus a duplicate, and a missing key.
+    const stateFile = path.join(
+      cluster!.dataDir,
+      'services',
+      'checkout.json',
+    );
+    const before = JSON.parse(await readFile(stateFile, 'utf8')) as ServicePersistentState;
+    (before.candidates['repair-extra'] ??= {}).timeoutMs = [
+      {
+        releaseId: 'rel-repair-group',
+        coordinatorAcceptedAt: acceptedAt,
+        acceptedOrder: 999_020,
+        value: 42,
+      },
+    ];
+    before.candidates['repair-gamma']!.timeoutMs!.push({
+      releaseId: 'rel-repair-group',
+      coordinatorAcceptedAt: acceptedAt,
+      acceptedOrder: 999_020,
+      value: 1717,
+    });
+    delete before.candidates['repair-delta']!.timeoutMs;
+    before.routes['repair-delta']!.effective.timeoutMs = 1800;
+    await writeFile(stateFile, JSON.stringify(before, null, 2));
+    await cluster!.restartService('checkout');
+
+    const dirty = await directFetch('checkout', '/__admin/releases/rel-repair-group/consistency');
+    assert.equal(dirty.body.consistency.consistent, false);
+
+    const repair = await directFetch('checkout', '/__admin/releases/rel-repair-group/repair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        targetStatus: 'active',
+        coordinatorAcceptedAt: acceptedAt,
+        acceptedOrder: 999_020,
+        changes: [
+          { serviceId: 'checkout', routeId: 'repair-gamma', timeoutMs: 1700 },
+          { serviceId: 'checkout', routeId: 'repair-delta', timeoutMs: 1800 },
+        ],
+      }),
+    });
+    assert.equal(repair.status, 200, repair.text);
+    assert.equal(repair.body.ok, true, JSON.stringify(repair.body.issues));
+
+    const configA = await directFetch('checkout', '/__admin/config/repair-gamma');
+    const configB = await directFetch('checkout', '/__admin/config/repair-delta');
+    const configExtra = await directFetch('checkout', '/__admin/config/repair-extra');
+    assert.equal(configA.body.effective.timeoutMs, 1700);
+    assert.equal(configB.body.effective.timeoutMs, 1800);
+    assert.equal(configExtra.body.effective.timeoutMs, 1800, '多余项应被移除并回退到初始值');
+
+    const clean = await directFetch('checkout', '/__admin/releases/rel-repair-group/consistency');
+    assert.equal(clean.body.consistency.consistent, true, JSON.stringify(clean.body.consistency));
+
+    // A legal resend of the same payload still yields the first accept result,
+    // even after the repair rewrote the group.
+    const resend = await fetch(`${url}/__admin/releases/rel-repair-group/accept`, {
+      method: 'POST',
+      body: JSON.stringify({
+        coordinatorAcceptedAt: acceptedAt,
+        acceptedOrder: 999_020,
+        changes: [
+          { serviceId: 'checkout', routeId: 'repair-gamma', timeoutMs: 1700 },
+          { serviceId: 'checkout', routeId: 'repair-delta', timeoutMs: 1800 },
+        ],
+      }),
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-group-resend' },
+    });
+    assert.equal(resend.status, 200);
+    assert.equal(resend.headers.get('x-idempotent-replay'), 'true');
+    const recordedFirst = clean.body.record.acceptResponse.body;
+    assert.deepEqual(await resend.json(), recordedFirst);
+    const afterResend = await directFetch('checkout', '/__admin/releases/rel-repair-group/consistency');
+    assert.equal(afterResend.body.consistency.consistent, true, '合法重送不应重新叠加候选');
+    assert.equal(
+      (afterResend.body.routes['repair-gamma'].candidates.timeoutMs as Array<{ releaseId: string }>).filter(
+        (item) => item.releaseId === 'rel-repair-group',
+      ).length,
+      1,
+    );
+
+    // Revoked releases keep their revocation and lose any residue.
+    const revoke = await directFetch('checkout', '/__admin/releases/rel-repair-group/revoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-group-revoke' },
+      body: '{}',
+    });
+    assert.equal(revoke.status, 200);
+    const residue = await directFetch('checkout', '/__admin/releases/rel-repair-group/repair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetStatus: 'revoked' }),
+    });
+    assert.equal(residue.status, 200, residue.text);
+    assert.equal(residue.body.status, 'revoked');
+    assert.equal(residue.body.consistent, true);
+    const revokedRelease = await directFetch('checkout', '/__admin/releases/rel-repair-group');
+    assert.equal(revokedRelease.body.status, 'revoked');
+    const afterRevokeCleanup = await directFetch('checkout', '/__admin/config/repair-gamma');
+    assert.equal(afterRevokeCleanup.body.effective.timeoutMs, 1600, '撤销后应回退到初始值');
+  });
+
   await check('单路由读取为物化 O(1)：20,000 条历史下 100,000 次读取保持快速', async () => {
     const perfDir = path.join(os.tmpdir(), `route-perf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(perfDir, { recursive: true });
@@ -626,6 +836,209 @@ async function main(): Promise<void> {
     await waitConfig('checkout', 'restart-route', (c) => c.timeoutMs === 1300);
   });
 
+  await check('未派发批次在修复时保持原状', async () => {
+    await addChaosRule('checkout', {
+      match: { pathIncludes: 'rel-repair-partial' },
+      dropResponse: true,
+    });
+    await createRelease({
+      releaseId: 'rel-repair-partial',
+      batches: [['checkout'], ['payments', 'risk']],
+      changes: [
+        { serviceId: 'checkout', routeId: 'repair-beta', timeoutMs: 1850 },
+        { serviceId: 'payments', routeId: 'ledger-entries', timeoutMs: 2050 },
+        { serviceId: 'risk', routeId: 'rules-config', timeoutMs: 3050 },
+      ],
+    });
+    await waitFor('checkout accepted rel-repair-partial', async () => {
+      const response = await directFetch('checkout', '/__admin/releases/rel-repair-partial');
+      return response.status === 200 && response.body.status === 'active' ? response.body : null;
+    });
+    await cFetch('/api/releases/rel-repair-partial/pause', { method: 'POST' });
+    // Let the already-dispatched first batch settle so the release parks in
+    // `paused` before the second batch.
+    await resetChaos('checkout');
+    await waitRelease('rel-repair-partial', (r) => r.status === 'paused');
+
+    // Second batch must have never been dispatched.
+    const before = await cFetch('/api/releases/rel-repair-partial');
+    assert.equal(before.body.services.payments.status, 'pending');
+    assert.equal(before.body.services.risk.status, 'pending');
+    assert.equal(hasAnyReleaseRequest('payments', 'rel-repair-partial'), false);
+    assert.equal(hasAnyReleaseRequest('risk', 'rel-repair-partial'), false);
+
+    await resetChaos('checkout');
+    const repaired = await cFetch('/api/releases/rel-repair-partial/repair', { method: 'POST' });
+    assert.equal(repaired.status, 200, repaired.text);
+
+    // Repair must not have touched the never-dispatched batch.
+    assert.equal(hasAnyReleaseRequest('payments', 'rel-repair-partial'), false);
+    assert.equal(hasAnyReleaseRequest('risk', 'rel-repair-partial'), false);
+    const afterBatch = await cFetch('/api/releases/rel-repair-partial');
+    assert.equal(afterBatch.body.services.payments.status, 'pending');
+    assert.equal(afterBatch.body.services.risk.status, 'pending');
+
+    // The paused release can be resumed and finish normally afterwards.
+    await cFetch('/api/releases/rel-repair-partial/resume', { method: 'POST' });
+    await waitRelease('rel-repair-partial', (r) => r.status === 'completed');
+  });
+
+  await check('协调器修复：回执丢失时凭服务现态确认完成；有错误贡献则不能报成功', async () => {
+    // Clean release, then corrupt one service's persisted state directly.
+    await createRelease({
+      releaseId: 'rel-repair-coord',
+      changes: [
+        { serviceId: 'checkout', routeId: 'repair-alpha', timeoutMs: 1900 },
+        { serviceId: 'checkout', routeId: 'repair-beta', timeoutMs: 1950 },
+      ],
+    });
+    await waitRelease('rel-repair-coord', (r) => r.status === 'completed');
+    await waitConfig('checkout', 'repair-alpha', (c) => c.timeoutMs === 1900);
+
+    await corruptServiceState('checkout', 'rel-repair-coord', (state) => {
+      // Extra contribution on an unrelated route, plus a duplicate on alpha.
+      state.candidates['confirm-payment'] ??= {};
+      state.candidates['confirm-payment']!.timeoutMs = [
+        ...(state.candidates['confirm-payment']!.timeoutMs ?? []),
+        {
+          releaseId: 'rel-repair-coord',
+          coordinatorAcceptedAt: state.releases['rel-repair-coord']!.coordinatorAcceptedAt,
+          acceptedOrder: state.releases['rel-repair-coord']!.acceptedOrder,
+          value: 111,
+        },
+      ];
+      state.candidates['repair-alpha']!.timeoutMs!.push({
+        releaseId: 'rel-repair-coord',
+        coordinatorAcceptedAt: state.releases['rel-repair-coord']!.coordinatorAcceptedAt,
+        acceptedOrder: state.releases['rel-repair-coord']!.acceptedOrder,
+        value: 1,
+      });
+    });
+
+    const dirty = await directFetch('checkout', '/__admin/releases/rel-repair-coord/consistency');
+    assert.equal(dirty.body.consistency.consistent, false);
+    assert.ok(dirty.body.consistency.extraCandidates.length >= 1);
+    assert.ok(dirty.body.consistency.duplicateCandidates.length >= 1);
+
+    // Repair response is dropped, but the write lands. The coordinator must
+    // confirm via the service's current state rather than reporting failure.
+    await resetChaos('checkout');
+    await addChaosRule('checkout', {
+      match: { method: 'POST', pathIncludes: 'rel-repair-coord/repair' },
+      dropResponse: true,
+    });
+    const repaired = await cFetch('/api/releases/rel-repair-coord/repair', { method: 'POST' });
+    assert.equal(repaired.status, 200, repaired.text);
+    assert.equal(repaired.body.repaired, true);
+    assert.equal(repaired.body.repair.services.checkout.confirmedViaState, true);
+
+    const clean = await directFetch('checkout', '/__admin/releases/rel-repair-coord/consistency');
+    assert.equal(clean.body.consistency.consistent, true, JSON.stringify(clean.body.consistency));
+
+    const configExtra = await directFetch('checkout', '/__admin/config/confirm-payment');
+    assert.equal(configExtra.body.effective.timeoutMs, 1200, '多余贡献应被移除');
+
+    // With a bad contribution still present and the repair write blocked, the
+    // read-back shows inconsistency, so the coordinator must report failure.
+    await corruptServiceState('checkout', 'rel-repair-coord', (state) => {
+      state.candidates['repair-alpha']!.timeoutMs!.push({
+        releaseId: 'rel-repair-coord',
+        coordinatorAcceptedAt: state.releases['rel-repair-coord']!.coordinatorAcceptedAt,
+        acceptedOrder: state.releases['rel-repair-coord']!.acceptedOrder,
+        value: 1,
+      });
+    });
+    await resetChaos('checkout');
+    await addChaosRule('checkout', {
+      match: { method: 'POST', pathIncludes: 'rel-repair-coord/repair' },
+      dropRequest: true,
+    });
+    const failed = await cFetch('/api/releases/rel-repair-coord/repair', { method: 'POST' });
+    assert.equal(failed.status, 409, failed.text);
+    assert.equal(failed.body.repaired, false);
+    assert.equal(failed.body.repair.services.checkout.status, 'failed');
+    await resetChaos('checkout');
+    const stillDirty = await directFetch('checkout', '/__admin/releases/rel-repair-coord/consistency');
+    assert.equal(stillDirty.body.consistency.consistent, false);
+
+    // Once the write path is clear again, repair succeeds and cleans it up.
+    const recovered = await cFetch('/api/releases/rel-repair-coord/repair', { method: 'POST' });
+    assert.equal(recovered.status, 200, recovered.text);
+    const recoveredState = await directFetch('checkout', '/__admin/releases/rel-repair-coord/consistency');
+    assert.equal(recoveredState.body.consistency.consistent, true);
+  });
+
+  await check('重启或重送旧接纳/撤销请求后修复仍有效；残留被后续发布盖住时撤销后续发布会露出修正值', async () => {
+    const url = cluster!.getService('checkout').directUrl;
+
+    // Publish a later release that covers the same route, so the corrected
+    // value is hidden behind it.
+    await createRelease({
+      releaseId: 'rel-repair-cover',
+      changes: [{ serviceId: 'checkout', routeId: 'repair-alpha', timeoutMs: 1200 }],
+    });
+    await waitRelease('rel-repair-cover', (r) => r.status === 'completed');
+    await waitConfig('checkout', 'repair-alpha', (c) => c.timeoutMs === 1200);
+
+    // Restart the coordinator and a service; then replay the old accept and
+    // revoke requests (a legal resend must not re-add or un-revoke anything).
+    await cluster!.restartCoordinator();
+    await cluster!.restartService('checkout');
+
+    const acceptBody = JSON.stringify({
+      coordinatorAcceptedAt: '2026-01-01T00:00:00.000Z',
+      acceptedOrder: 999_999,
+      changes: [{ serviceId: 'checkout', routeId: 'repair-alpha', timeoutMs: 1900 }],
+    });
+    const resend = await fetch(`${url}/__admin/releases/rel-repair-coord/accept`, {
+      method: 'POST',
+      body: acceptBody,
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-coord-old' },
+    });
+    assert.equal(resend.status, 409, '重送与已接纳载荷不同的请求应被拒绝');
+
+    // A legal resend of the exact accepted payload (new key) still replays the
+    // first accept result after both restarts.
+    const record = (await directFetch('checkout', '/__admin/releases/rel-repair-coord')).body;
+    const exactPayload = JSON.stringify({
+      coordinatorAcceptedAt: record.coordinatorAcceptedAt,
+      acceptedOrder: record.acceptedOrder,
+      changes: record.changes,
+    });
+    const legalResend = await fetch(`${url}/__admin/releases/rel-repair-coord/accept`, {
+      method: 'POST',
+      body: exactPayload,
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-coord-legal' },
+    });
+    assert.equal(legalResend.status, 200, await legalResend.clone().text());
+    assert.equal(legalResend.headers.get('x-idempotent-replay'), 'true');
+    const beforeLegalConsistency = await directFetch('checkout', '/__admin/releases/rel-repair-coord/consistency');
+    assert.equal(beforeLegalConsistency.body.consistency.consistent, true, '合法重送不应破坏修复结果');
+
+    const repairAgain = await cFetch('/api/releases/rel-repair-coord/repair', { method: 'POST' });
+    assert.equal(repairAgain.status, 200, repairAgain.text);
+
+    // Revoking the later release must reveal the repaired value.
+    await cFetch('/api/releases/rel-repair-cover/revoke', { method: 'POST' });
+    await waitRelease('rel-repair-cover', (r) => r.status === 'revoked');
+    await waitConfig('checkout', 'repair-alpha', (c) => c.timeoutMs === 1900);
+
+    // Revoking the repaired release falls back to the initial value.
+    await cFetch('/api/releases/rel-repair-coord/revoke', { method: 'POST' });
+    await waitRelease('rel-repair-coord', (r) => r.status === 'revoked');
+    await waitConfig('checkout', 'repair-alpha', (c) => c.timeoutMs === 1400);
+
+    // Replaying the old revoke must not change anything.
+    const revokeReplay = await fetch(`${url}/__admin/releases/rel-repair-coord/revoke`, {
+      method: 'POST',
+      body: '{}',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'key-repair-coord-old-revoke' },
+    });
+    assert.equal(revokeReplay.status, 200);
+    const stillOriginal = await directFetch('checkout', '/__admin/config/repair-alpha');
+    assert.equal(stillOriginal.body.effective.timeoutMs, 1400);
+  });
+
   clearTimeout(hardTimer);
   await cluster.stop();
 
@@ -642,7 +1055,7 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
-  console.log('全部自检通过：发布、暂停、并发优先级、原子性、持久化、重启对账和夹具控制均正常。');
+  console.log('全部自检通过：发布、暂停、并发优先级、原子性、载荷冲突拒绝、操作员修复、持久化、重启对账和夹具控制均正常。');
   process.exit(0);
 }
 

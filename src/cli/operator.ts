@@ -80,6 +80,7 @@ async function main(): Promise<void> {
   npm run op -- resume <releaseId>
   npm run op -- revoke <releaseId>
   npm run op -- reconcile [releaseId]
+  npm run op -- repair <releaseId>
 
 选项:
   --coordinator=http://127.0.0.1:4100
@@ -129,13 +130,23 @@ async function main(): Promise<void> {
     resume: 'resume',
     revoke: 'revoke',
     reconcile: 'reconcile',
+    repair: 'repair',
   };
   const action = actionMap[command];
   if (action) {
     const id = positionals(argv)[1];
+    if (action === 'reconcile' && !id) {
+      const result = await fetchJson(`${base}/api/reconcile`, { method: 'POST' });
+      console.log(JSON.stringify(result.body, null, 2));
+      if (result.status >= 400) process.exit(1);
+      return;
+    }
     if (!id) throw new Error(`${command} requires <releaseId>`);
     const result = await fetchJson(`${base}/api/releases/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-    if (result.status >= 400) throw new Error(result.text);
+    if (result.status >= 400) {
+      console.error(result.text);
+      process.exit(1);
+    }
     printReleaseSummary(result.body);
     return;
   }

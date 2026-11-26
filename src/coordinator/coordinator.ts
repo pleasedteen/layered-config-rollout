@@ -4,6 +4,7 @@ import { AtomicJsonStore, delay, nowIso } from '../shared/store.js';
 import { fetchJson } from '../shared/http.js';
 import { ApiError } from '../shared/errors.js';
 import {
+  canonicalizeChanges,
   deriveTargetServiceIds,
   normalizeBatches,
   normalizeChanges,
@@ -11,6 +12,7 @@ import {
 import type {
   CoordinatorPersistentState,
   ReleaseRecord,
+  RepairServiceState,
   RevokeDispatchState,
   ServiceDispatchState,
   ServiceEndpoint,
@@ -598,5 +600,248 @@ export class Coordinator {
     const response = await fetchJson(`${url}/__admin/config`, { timeoutMs: this.requestTimeoutMs });
     if (response.status !== 200) throw new Error(`service config fetch failed: ${response.status}`);
     return response.body;
+  }
+
+  /**
+   * Operator reconciliation: for each target service, ask it to rebuild this
+   * release's contributions from the coordinator's canonical record (active
+   * releases) or to strip every residue (revoked releases). Pending, never
+   * dispatched batches are left untouched.
+   *
+   * If the repair receipt is lost while the write still took effect, the
+   * coordinator confirms via a read-back of the service's persisted state.
+   * A release whose repair leaves any inconsistent contribution must fail.
+   */
+  async repairRelease(id: string): Promise<{
+    release: ReleaseRecord;
+    repaired: boolean;
+    services: Record<string, RepairServiceState>;
+  }> {
+    const release = this.getRelease(id);
+    // A release that has been revoked (or is on the revocation path) must be
+    // repaired towards "no contribution" so repair can never resurrect it.
+    const targetStatus: 'active' | 'revoked' =
+      release.status === 'revoked' || release.status === 'revoking' ? 'revoked' : 'active';
+
+    const eligibleServiceIds = release.targetServiceIds.filter((serviceId) =>
+      targetStatus === 'revoked'
+        ? this.isRevokeDispatched(release, serviceId)
+        : this.isAcceptDispatched(release, serviceId),
+    );
+
+    const now = nowIso();
+    const services: Record<string, RepairServiceState> = {};
+    for (const serviceId of eligibleServiceIds) {
+      services[serviceId] = {
+        serviceId,
+        targetStatus,
+        status: 'failed',
+        attempts: 0,
+        lastAttemptAt: now,
+      };
+    }
+
+    await this.store.mutate((draft) => {
+      const current = draft.releases[id];
+      if (!current) return { result: undefined };
+      current.repair = {
+        startedAt: now,
+        services: structuredClone(services),
+      };
+      current.events.push({
+        at: now,
+        type: 'repair-started',
+        message: `Repair started for ${eligibleServiceIds.length} dispatched service(s) targeting ${targetStatus}`,
+      });
+      return { next: draft, result: undefined };
+    });
+
+    await Promise.all(
+      eligibleServiceIds.map((serviceId) => this.repairService(id, serviceId, targetStatus)),
+    );
+
+    const finalState = this.store.get().releases[id]!;
+    const repaired = eligibleServiceIds.every(
+      (serviceId) => finalState.repair?.services[serviceId]?.status === 'repaired',
+    );
+
+    await this.store.mutate((draft) => {
+      const current = draft.releases[id];
+      if (!current?.repair) return { result: undefined };
+      current.repair.completedAt = nowIso();
+      current.events.push({
+        at: nowIso(),
+        type: repaired ? 'repair-completed' : 'repair-failed',
+        message: repaired
+          ? 'Every dispatched service now matches the coordinator payload'
+          : 'Repair left inconsistent contributions on at least one service',
+      });
+      return { next: draft, result: undefined };
+    });
+
+    return {
+      release: this.store.get().releases[id]!,
+      repaired,
+      services: this.store.get().releases[id]!.repair?.services ?? services,
+    };
+  }
+
+  /**
+   * A service takes part in repair only if the coordinator ever sent it this
+   * release. Batches that were never dispatched stay exactly as they are.
+   */
+  private isAcceptDispatched(release: ReleaseRecord, serviceId: string): boolean {
+    const dispatch = release.services[serviceId];
+    if (!dispatch) return false;
+    return dispatch.status !== 'pending' || dispatch.attempts > 0;
+  }
+
+  private isRevokeDispatched(release: ReleaseRecord, serviceId: string): boolean {
+    const dispatch = release.revocation?.services[serviceId];
+    if (!dispatch) return false;
+    return dispatch.status !== 'pending' || dispatch.attempts > 0;
+  }
+
+  private async repairService(
+    id: string,
+    serviceId: string,
+    targetStatus: 'active' | 'revoked',
+  ): Promise<void> {
+    const release = this.store.get().releases[id]!;
+    const endpoint = this.endpoint(serviceId);
+    const changes = this.changesForService(release, serviceId);
+    const body =
+      targetStatus === 'active'
+        ? JSON.stringify({
+            releaseId: id,
+            targetStatus,
+            coordinatorAcceptedAt: release.coordinatorAcceptedAt,
+            acceptedOrder: release.acceptedOrder,
+            changes,
+          })
+        : JSON.stringify({ releaseId: id, targetStatus });
+
+    await this.store.mutate((draft) => {
+      const state = draft.releases[id]?.repair?.services[serviceId];
+      if (state) {
+        state.attempts += 1;
+        state.lastAttemptAt = nowIso();
+      }
+      return { next: draft, result: undefined };
+    });
+
+    try {
+      const response = await fetchJson(
+        `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}/repair`,
+        {
+          method: 'POST',
+          body,
+          timeoutMs: this.requestTimeoutMs,
+          headers: { 'content-type': 'application/json' },
+        },
+      );
+      if (response.status === 200 && response.body?.ok === true && response.body?.consistent !== false) {
+        await this.markRepaired(id, serviceId, false);
+        return;
+      }
+      throw new Error(`repair failed with HTTP ${response.status}: ${response.text.slice(0, 300)}`);
+    } catch (error) {
+      // The receipt may have been lost after the write landed. Confirm by
+      // reading the service's actual persisted state.
+      const confirmed = await this.confirmRepairViaState(id, serviceId, targetStatus).catch(() => false);
+      if (confirmed) {
+        await this.markRepaired(id, serviceId, true);
+        return;
+      }
+      await this.store.mutate((draft) => {
+        const state = draft.releases[id]?.repair?.services[serviceId];
+        if (state) {
+          state.status = 'failed';
+          state.lastError = (error as Error).message;
+        }
+        return { next: draft, result: undefined };
+      });
+    }
+  }
+
+  /** Reads back the service state and checks the release has no bad contribution. */
+  private async confirmRepairViaState(
+    id: string,
+    serviceId: string,
+    targetStatus: 'active' | 'revoked',
+  ): Promise<boolean> {
+    const endpoint = this.endpoint(serviceId);
+    const release = this.store.get().releases[id];
+    if (!release) return false;
+    const response = await fetchJson(
+      `${endpoint.baseUrl}/__admin/releases/${encodeURIComponent(id)}/consistency`,
+      { method: 'GET', timeoutMs: this.requestTimeoutMs },
+    );
+    if (response.status !== 200) return false;
+    const status = response.body?.status;
+    const consistency = response.body?.consistency;
+    if (consistency?.consistent !== true) return false;
+    if (targetStatus === 'revoked') return status === 'revoked' || status === 'absent';
+    if (status !== 'active') return false;
+    // A read-back alone is not enough: the service might be a healthy active
+    // record that still disagrees with the coordinator payload.
+    const record = response.body?.record;
+    if (!record || record.coordinatorAcceptedAt !== release.coordinatorAcceptedAt) return false;
+    if (record.acceptedOrder !== release.acceptedOrder) return false;
+    const expected = this.changesForService(release, serviceId);
+    if (JSON.stringify(canonicalizeChanges(record.changes ?? [])) !== JSON.stringify(canonicalizeChanges(expected))) {
+      return false;
+    }
+    return true;
+  }
+
+  private async markRepaired(id: string, serviceId: string, confirmedViaState: boolean): Promise<void> {
+    await this.store.mutate((draft) => {
+      const release = draft.releases[id];
+      const state = release?.repair?.services[serviceId];
+      if (!release || !state) return { result: undefined };
+      state.status = 'repaired';
+      state.confirmedViaState = confirmedViaState;
+      state.coordinatorConfirmedAt = nowIso();
+      state.lastError = undefined;
+      if (state.targetStatus === 'active') {
+        // The service now provably matches the coordinator payload, so the
+        // coordinator's own dispatch record can follow it.
+        const dispatch = release.services[serviceId];
+        if (dispatch && dispatch.status !== 'accepted') {
+          dispatch.status = 'accepted';
+          dispatch.coordinatorConfirmedAt = nowIso();
+          dispatch.lastError = undefined;
+        }
+      } else {
+        const revokeDispatch = release.revocation?.services[serviceId];
+        if (revokeDispatch && revokeDispatch.status !== 'revoked') {
+          revokeDispatch.status = 'revoked';
+          revokeDispatch.coordinatorConfirmedAt = nowIso();
+          revokeDispatch.lastError = undefined;
+        }
+      }
+      return { next: draft, result: undefined };
+    });
+  }
+
+  /**
+   * Explicit operator reconciliation over every known release. Presence-only
+   * periodic reconciliation never calls this; it is only reachable through
+   * the operator reconcile endpoints.
+   */
+  async repairAll(): Promise<{
+    ok: boolean;
+    results: Array<{ releaseId: string; repaired: boolean }>;
+  }> {
+    await this.reconcileAll();
+    const releases = this.listReleases();
+    const results = await Promise.all(
+      releases.map(async (release) => {
+        const outcome = await this.repairRelease(release.id);
+        return { releaseId: release.id, repaired: outcome.repaired };
+      }),
+    );
+    return { ok: results.every((item) => item.repaired), results };
   }
 }

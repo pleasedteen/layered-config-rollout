@@ -115,10 +115,15 @@ function renderReleases(data) {
     if (r.status === 'paused') actions.push('<button data-action="resume" data-id="'+esc(r.id)+'">继续</button>');
     if (r.status === 'completed') actions.push('<button data-action="revoke" data-id="'+esc(r.id)+'">撤销</button>');
     actions.push('<button data-action="reconcile" data-id="'+esc(r.id)+'">立即对账</button>');
+    actions.push('<button data-action="repair" data-id="'+esc(r.id)+'">修复</button>');
+    const repairLine = r.repair && r.repair.services
+      ? '<div>修复: ' + Object.values(r.repair.services).map(s => esc(s.serviceId + '=' + s.status + (s.confirmedViaState ? '(现态确认)' : ''))).join('；') + '</div>'
+      : '';
     return '<div style="margin-bottom:18px"><h3>'+esc(r.id)+' <span class="'+statusClass(r.status)+'">'+esc(r.status)+'</span></h3>'
       + '<div>协调器受理顺序 #' + r.acceptedOrder + ' / ' + esc(r.coordinatorAcceptedAt) + '；批次 ' + p.confirmedBatches + '/' + p.totalBatches + '</div>'
       + '<div style="margin:8px 0">'+actions.join('')+'</div><ul>'+batches+'</ul>'
       + (r.revocationProgress ? '<div>撤销进度 '+r.revocationProgress.confirmedBatches+'/'+r.revocationProgress.totalBatches+'</div>' : '')
+      + repairLine
       + '</div>';
   }).join('');
 }
@@ -172,6 +177,7 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
             'POST /api/releases/:id/resume',
             'POST /api/releases/:id/revoke',
             'POST /api/releases/:id/reconcile',
+            'POST /api/releases/:id/repair',
             'POST /api/reconcile',
             'GET /api/dashboard',
             'GET /api/services/:serviceId/actual-config',
@@ -236,11 +242,25 @@ export function createCoordinatorServer(coordinator: Coordinator): http.Server {
           sendJson(res, 200, releaseView(coordinator.getRelease(id)));
           return;
         }
+        if (req.method === 'POST' && action === 'repair') {
+          const result = await coordinator.repairRelease(id);
+          sendJson(res, result.repaired ? 200 : 409, {
+            ...releaseView(result.release),
+            ok: result.repaired,
+            repaired: result.repaired,
+            repair: {
+              ...(result.release.repair ?? {}),
+              ok: result.repaired,
+              services: result.services,
+            },
+          });
+          return;
+        }
       }
 
       if (req.method === 'POST' && url.pathname === '/api/reconcile') {
-        await coordinator.reconcileAll();
-        sendJson(res, 200, { ok: true });
+        const result = await coordinator.repairAll();
+        sendJson(res, result.ok ? 200 : 409, result);
         return;
       }
 

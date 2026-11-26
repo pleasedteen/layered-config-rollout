@@ -46,6 +46,14 @@ export interface Candidate {
 
 export type ServiceReleaseStatus = 'active' | 'revoked';
 
+/** The first successful accept response, retained so a legal resend (same
+ * payload under a different idempotency key) can still return the first result. */
+export interface StoredServiceResponse {
+  statusCode: number;
+  body: unknown;
+  completedAt: string;
+}
+
 export interface ServiceReleaseRecord {
   releaseId: string;
   coordinatorAcceptedAt: string;
@@ -54,6 +62,12 @@ export interface ServiceReleaseRecord {
   changes: RouteChange[];
   serviceAcceptedAt: string;
   serviceRevokedAt?: string;
+  /** Canonical hash of the coordinator payload that created this record. */
+  payloadHash?: string;
+  /** First successful accept response, replayed for legal resends. */
+  acceptResponse?: StoredServiceResponse;
+  /** Last time an operator repair rewrote this release's contributions. */
+  repairedAt?: string;
 }
 
 export interface StoredHttpRequest {
@@ -61,6 +75,29 @@ export interface StoredHttpRequest {
   statusCode: number;
   responseJson: unknown;
   completedAt: string;
+  payloadHash?: string;
+  releaseId?: string;
+}
+
+export interface ReleaseConsistencyIssue {
+  routeId: string;
+  configKey: ConfigKey;
+}
+
+export interface ReleaseConsistencyMismatch extends ReleaseConsistencyIssue {
+  expected: number;
+  actual: number;
+}
+
+export interface ServiceReleaseConsistency {
+  releaseId: string;
+  status: 'absent' | ServiceReleaseStatus;
+  consistent: boolean;
+  extraCandidates: ReleaseConsistencyIssue[];
+  duplicateCandidates: Array<ReleaseConsistencyIssue & { count: number }>;
+  missingCandidates: ReleaseConsistencyIssue[];
+  mismatchedCandidates: ReleaseConsistencyMismatch[];
+  staleEffective: ReleaseConsistencyMismatch[];
 }
 
 export interface RouteState {
@@ -127,6 +164,38 @@ export interface RevocationState {
   services: Record<string, RevokeDispatchState>;
 }
 
+/** Outcome of an operator-triggered repair for a single service. */
+export interface RepairServiceState {
+  serviceId: string;
+  /** The release status the service was asked to assume. */
+  targetStatus: 'active' | 'revoked';
+  status: 'repaired' | 'failed';
+  attempts: number;
+  lastAttemptAt: string;
+  /** True when the receipt was lost and success was read back from the service. */
+  confirmedViaState?: boolean;
+  lastError?: string;
+  coordinatorConfirmedAt?: string;
+}
+
+export interface RepairState {
+  startedAt: string;
+  completedAt?: string;
+  services: Record<string, RepairServiceState>;
+}
+
+export interface RepairResponseBody {
+  ok: boolean;
+  serviceId: string;
+  releaseId: string;
+  targetStatus: 'active' | 'revoked';
+  status: 'absent' | ServiceReleaseStatus;
+  repaired: boolean;
+  consistent: boolean;
+  issues: string[];
+  effective: Record<string, RouteConfig>;
+}
+
 export interface ReleaseRecord {
   id: string;
   status: ReleaseStatus;
@@ -143,6 +212,7 @@ export interface ReleaseRecord {
   revokedAt?: string;
   services: Record<string, ServiceDispatchState>;
   revocation?: RevocationState;
+  repair?: RepairState;
   events: ReleaseEvent[];
 }
 

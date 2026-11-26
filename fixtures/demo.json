@@ -88,6 +88,41 @@
           "path": "/proxy/rate-limited-demo",
           "initial": { "timeoutMs": 500, "rateLimitPerMinute": 100 },
           "upstream": { "latencyMs": 4, "status": 200, "body": "rate-demo" }
+        },
+        {
+          "id": "repair-alpha",
+          "method": "GET",
+          "path": "/proxy/repair-alpha",
+          "initial": { "timeoutMs": 1400, "rateLimitPerMinute": 140 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "repair-alpha" }
+        },
+        {
+          "id": "repair-beta",
+          "method": "GET",
+          "path": "/proxy/repair-beta",
+          "initial": { "timeoutMs": 1500, "rateLimitPerMinute": 150 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "repair-beta" }
+        },
+        {
+          "id": "repair-gamma",
+          "method": "GET",
+          "path": "/proxy/repair-gamma",
+          "initial": { "timeoutMs": 1600, "rateLimitPerMinute": 160 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "repair-gamma" }
+        },
+        {
+          "id": "repair-delta",
+          "method": "GET",
+          "path": "/proxy/repair-delta",
+          "initial": { "timeoutMs": 1700, "rateLimitPerMinute": 170 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "repair-delta" }
+        },
+        {
+          "id": "repair-extra",
+          "method": "GET",
+          "path": "/proxy/repair-extra",
+          "initial": { "timeoutMs": 1800, "rateLimitPerMinute": 180 },
+          "upstream": { "latencyMs": 5, "status": 200, "body": "repair-extra" }
         }
       ]
     },

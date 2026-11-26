@@ -63,6 +63,39 @@ export function createForwardServiceServer(service: ConfigService): http.Server 
           return;
         }
 
+        if (req.method === 'GET' && segments[1] === 'releases' && segments[2] && segments[3] === 'consistency') {
+          const releaseId = decodeURIComponent(segments[2]);
+          const consistency = service.getConsistency(releaseId);
+          const routes: Record<string, unknown> = {};
+          const state = service.snapshot();
+          for (const routeId of new Set([
+            ...consistency.extraCandidates.map((item) => item.routeId),
+            ...consistency.missingCandidates.map((item) => item.routeId),
+            ...consistency.mismatchedCandidates.map((item) => item.routeId),
+            ...consistency.duplicateCandidates.map((item) => item.routeId),
+            ...consistency.staleEffective.map((item) => item.routeId),
+            ...(state.releases[releaseId]?.changes.map((change) => change.routeId) ?? []),
+          ])) {
+            const route = state.routes[routeId];
+            if (!route) continue;
+            routes[routeId] = {
+              initial: route.initial,
+              effective: route.effective,
+              candidates: state.candidates[routeId] ?? {},
+            };
+          }
+          sendJson(res, 200, {
+            ok: true,
+            serviceId: service.definition.id,
+            releaseId,
+            status: consistency.status,
+            record: service.getRelease(releaseId),
+            consistency,
+            routes,
+          });
+          return;
+        }
+
         if (req.method === 'GET' && segments[1] === 'releases' && segments[2]) {
           const releaseId = decodeURIComponent(segments[2]);
           const release = service.getRelease(releaseId);
@@ -103,6 +136,14 @@ export function createForwardServiceServer(service: ConfigService): http.Server 
             Array.isArray(key) ? key[0] : key,
           );
           if (result.replayed) res.setHeader('x-idempotent-replay', 'true');
+          sendJson(res, result.statusCode, result.body);
+          return;
+        }
+
+        if (req.method === 'POST' && segments[1] === 'releases' && segments[2] && segments[3] === 'repair') {
+          const releaseId = decodeURIComponent(segments[2]);
+          const body = await readJsonBody(req);
+          const result = await service.repairRelease(releaseId, body);
           sendJson(res, result.statusCode, result.body);
           return;
         }
